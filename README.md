@@ -1,5 +1,9 @@
 # Only Listed Websites — Microsoft Edge extension
 
+[Privacy policy](PRIVACY.md) · Support: vikasgupta.net@live.com
+
+Store submission is pending. Automated tests do not replace live Edge installation and network checks below.
+
 ## Install
 
 1. Open `edge://extensions` in desktop Microsoft Edge.
@@ -32,5 +36,7 @@ This is a personal browser restriction, not tamper-proof parental control or a s
 6. Confirm unlisted images/API hosts are blocked using Edge DevTools Network panel.
 
 Run automated policy and worker tests with `node --test tests/policy.test.mjs`.
+
+Build the store upload package with `python build.py`. The ZIP is written to `dist/` with only runtime files. GitHub Actions runs the tests and uploads the ZIP as a workflow artifact.
 
 References: https://learn.microsoft.com/en-us/microsoft-edge/extensions/getting-started/extension-sideloading and https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest
