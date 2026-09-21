@@ -43,7 +43,7 @@ The password makes casual changes harder, but this is not tamper-proof parental 
 6. Confirm a listed site such as youtube.com can load video resources, while direct navigation to an unlisted supporting domain is blocked.
 7. Search for a saved domain and verify the match count and filter. On an allowed website, click the extension toolbar button, unlock settings, and verify the **Current website** shortcut fills or selects that domain.
 
-Run automated policy and worker tests with `node --test tests/policy.test.mjs`.
+Run policy, worker, and settings-page unit tests with `npm ci` followed by `npm test`.
 
 Build the store upload package with `python build.py`. The ZIP is written to `dist/` with only runtime files. GitHub Actions runs the tests and uploads the ZIP as a workflow artifact.
 
