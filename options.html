@@ -11,8 +11,10 @@
 <section id="settings" hidden>
   <div class="card">
     <h2>Website rules</h2><p class="hint">Add a domain such as <strong>youtube.com</strong>. Subdomains are included. Enter a domain only, without <code>https://</code> or a path.</p>
+    <div id="current-site-box" class="current-site" hidden><div><span class="badge">CURRENT WEBSITE</span><strong id="current-site-domain"></strong><span id="current-site-state" class="hint"></span></div><button id="current-site-action" type="button" class="secondary">Use this website</button></div>
     <form id="add-form" class="add-form"><div><label for="new-domain">Website domain</label><input id="new-domain" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="example.com" required></div><label class="checkbox-line" for="new-allowed"><input id="new-allowed" type="checkbox" checked><span>Allow this website</span></label><button id="add" type="submit">Add website</button></form>
     <div class="list-heading"><div><h3>Saved websites</h3><span id="count" class="hint"></span></div><div><label for="filter">Show</label><select id="filter"><option value="all">All websites</option><option value="allowed">Allowed only</option><option value="blocked">Blocked only</option></select></div></div>
+    <label for="search">Find a website</label><input id="search" type="search" placeholder="Search saved domains" autocomplete="off"><p id="match-count" class="hint" aria-live="polite"></p>
     <select id="sites" class="site-list" size="9" aria-label="Saved website rules" aria-describedby="list-help"></select>
     <p id="list-help" class="hint">Select a website to change its checkbox. Changes save immediately.</p>
     <div id="editor" class="site-editor" hidden><div><strong id="selected-domain"></strong><span id="selected-state" class="state-pill"></span></div><label class="checkbox-line" for="selected-allowed"><input id="selected-allowed" type="checkbox"><span>Allow this website</span></label><button id="remove" type="button" class="secondary">Remove from list</button></div>

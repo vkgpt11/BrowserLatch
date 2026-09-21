@@ -62,18 +62,21 @@ test('explicit blocked domains override parent-domain allowances', () => {
   assert.deepEqual(buildRules([], ['example.com']).map(rule => rule.id), [102, 103]);
 });
 test('worker protects rules, rejects foreign senders and preserves rules after failures', async () => {
-  let listener, installedListener, persisted = [], fail = false, local = {};
+  let listener, installedListener, actionListener, persisted = [], fail = false, local = {}, session = {};
   const chrome = {
-    action: {onClicked: {addListener() {}}},
+    action: {onClicked: {addListener(fn) {actionListener = fn;}}},
     runtime: {id: 'unit-test', getURL: path => `chrome-extension://unit-test/${path}`, openOptionsPage() {}, onInstalled: {addListener(fn) {installedListener = fn;}}, onMessage: {addListener(fn) {listener = fn;}}},
-    storage: {local: {setAccessLevel() {}, get: async keys => Object.fromEntries(keys.filter(key => key in local).map(key => [key, structuredClone(local[key])])), set: async values => Object.assign(local, structuredClone(values))}},
+    storage: {
+      local: {setAccessLevel() {}, get: async keys => Object.fromEntries(keys.filter(key => key in local).map(key => [key, structuredClone(local[key])])), set: async values => Object.assign(local, structuredClone(values))},
+      session: {get: async key => ({[key]: session[key]}), set: async values => Object.assign(session, values), remove: async key => {delete session[key];}}
+    },
     declarativeNetRequest: {
       getDynamicRules: async () => structuredClone(persisted),
       updateDynamicRules: async ({addRules}) => {if (fail) throw new Error('Rejected update'); persisted = structuredClone(addRules);}
     }
   };
   const source = (await readFile(new URL('../background.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '');
-  const start = () => vm.runInNewContext(source, {chrome, parseDomains, buildRules, createPasswordRecord, verifyPassword, Date});
+  const start = () => vm.runInNewContext(source, {chrome, parseDomains, buildRules, createPasswordRecord, verifyPassword, Date, URL});
   start();
   const sender = {id: chrome.runtime.id, url: chrome.runtime.getURL('options.html')};
   const send = message => new Promise(resolve => listener(message, sender, resolve));
@@ -91,8 +94,14 @@ test('worker protects rules, rejects foreign senders and preserves rules after f
   assert.equal((await send({type: 'unlock', password: 'parent passphrase'})).ok, true);
   assert.equal((await send({type: 'changePassword', currentPassword: 'parent passphrase', newPassword: 'replacement passphrase'})).ok, true);
   await send({type: 'lock'});
+  await actionListener({url: 'https://www.youtube.com/watch?v=sample'});
+  assert.equal((await send({type: 'read'})).ok, false);
   assert.equal((await send({type: 'unlock', password: 'parent passphrase'})).ok, false);
   assert.equal((await send({type: 'unlock', password: 'replacement passphrase'})).ok, true);
+  assert.equal((await send({type: 'read'})).currentSite, 'www.youtube.com');
+  assert.equal((await send({type: 'read'})).currentSite, '');
+  await actionListener({url: 'edge://settings/'});
+  assert.equal((await send({type: 'read'})).currentSite, '');
   assert.deepEqual((await send({type: 'read'})).domains, ['example.com']);
   persisted = [{id: 100, priority: 3, action: {type: 'allow'}, condition: {requestDomains: ['youtube.com'], excludedResourceTypes: []}}];
   await installedListener({reason: 'update'});

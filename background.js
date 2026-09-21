@@ -7,7 +7,16 @@ const UNLOCK_MS = 5 * 60 * 1000;
 let unlockedUntil = 0;
 let queue = Promise.resolve();
 
-chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+chrome.action.onClicked.addListener(async tab => {
+  let host = '';
+  try {
+    const url = new URL(tab.url);
+    if (url.protocol === 'http:' || url.protocol === 'https:') host = url.hostname.toLowerCase();
+  } catch {}
+  if (host) await chrome.storage.session.set({pendingSite: {host, capturedAt: Date.now()}});
+  else await chrome.storage.session.remove('pendingSite');
+  await chrome.runtime.openOptionsPage();
+});
 chrome.runtime.onInstalled.addListener(({reason}) => {
   chrome.storage.local.setAccessLevel?.({accessLevel: 'TRUSTED_CONTEXTS'});
   if (reason === 'install') chrome.runtime.openOptionsPage();
@@ -77,7 +86,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     const rules = await chrome.declarativeNetRequest.getDynamicRules();
     const allowed = rules.find(rule => rule.id === 100)?.condition.requestDomains ?? [];
     const blocked = rules.find(rule => rule.id === 102)?.condition.requestDomains ?? [];
-    return {ok: true, configured: true, unlocked: true, allowed, blocked, domains: allowed};
+    let currentSite = '';
+    if (message.type === 'read') {
+      const {pendingSite} = await chrome.storage.session.get('pendingSite');
+      await chrome.storage.session.remove('pendingSite');
+      if (pendingSite && now - pendingSite.capturedAt < UNLOCK_MS) currentSite = pendingSite.host;
+    }
+    return {ok: true, configured: true, unlocked: true, allowed, blocked, domains: allowed, currentSite};
   });
   queue = job.catch(() => {});
   job.then(respond, error => respond({ok: false, error: error.message}));

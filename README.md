@@ -20,6 +20,7 @@ If using the ZIP, extract it first and select the extracted folder containing ma
 - A listed domain permits that domain and its subdomains, on all ports and paths. For example, `example.com` allows `www.example.com` but never `example.com.attacker.test` or `notexample.com`.
 - Enter domains only, not URLs, paths, ports or wildcard patterns. Internationalized domains are converted to ASCII (punycode).
 - The settings list shows allowed and explicitly blocked domains. Filter it with **Show**, select an entry, then change its checkbox or remove it. Changes save immediately.
+- Search saved domains as you type. Clicking the toolbar button on a website opens settings with an **Add this website** shortcut; you still need the parent password to change the rule. The clicked domain is kept in memory only until settings are unlocked and shown.
 - Explicitly blocked domains override allowed parent domains. For example, you can allow `example.com` but block `kids.example.com`. Unlisted websites are blocked by default, so you do not need to add every unwanted website individually.
 - All unlisted HTTP/HTTPS page navigations redirect to a local blocked page. Unlisted embedded frames remain blocked.
 - A listed page can load supporting scripts, images, video streams and API requests from other domains. This makes sites such as YouTube work without separately listing each supporting domain. It does not allow navigating to those domains as websites.
@@ -40,6 +41,7 @@ The password makes casual changes harder, but this is not tamper-proof parental 
 4. Remove `example.com` and revisit it: expect blocking. Restart Edge and repeat.
 5. Enter `https://example.com/path` or `*.com`: adding must fail and retain the old rules.
 6. Confirm a listed site such as youtube.com can load video resources, while direct navigation to an unlisted supporting domain is blocked.
+7. Search for a saved domain and verify the match count and filter. On an allowed website, click the extension toolbar button, unlock settings, and verify the **Current website** shortcut fills or selects that domain.
 
 Run automated policy and worker tests with `node --test tests/policy.test.mjs`.
 

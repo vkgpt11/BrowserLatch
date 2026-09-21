@@ -8,6 +8,9 @@ let allowed = [];
 let blocked = [];
 let selected = '';
 let busy = false;
+let currentSite = '';
+
+const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${domain}`);
 
 async function request(message) {
   const result = await chrome.runtime.sendMessage(message);
@@ -26,11 +29,12 @@ function showLocked(configured, message = '') {
 
 function render() {
   const filter = $('#filter').value;
+  const query = $('#search').value.trim().toLowerCase();
   const list = $('#sites');
   list.replaceChildren();
   const entries = [...allowed.map(domain => ({domain, state: 'Allowed'})),
     ...blocked.map(domain => ({domain, state: 'Blocked'}))]
-    .filter(entry => filter === 'all' || entry.state.toLowerCase() === filter)
+    .filter(entry => (filter === 'all' || entry.state.toLowerCase() === filter) && entry.domain.includes(query))
     .sort((a, b) => a.domain.localeCompare(b.domain));
   for (const entry of entries) {
     const option = document.createElement('option');
@@ -48,6 +52,14 @@ function render() {
   if (!entries.some(entry => entry.domain === selected)) selected = '';
   list.value = selected;
   $('#count').textContent = `${allowed.length} allowed · ${blocked.length} blocked`;
+  $('#match-count').textContent = `${entries.length} matching ${entries.length === 1 ? 'website' : 'websites'}`;
+  $('#current-site-box').hidden = !currentSite;
+  if (currentSite) {
+    $('#current-site-domain').textContent = currentSite;
+    $('#current-site-state').textContent = blocked.some(domain => matchesDomain(currentSite, domain)) ? 'Blocked by a rule' :
+      allowed.some(domain => matchesDomain(currentSite, domain)) ? 'Allowed' : 'Blocked by default';
+    $('#current-site-action').textContent = allowed.includes(currentSite) || blocked.includes(currentSite) ? 'Edit saved entry' : 'Add this website';
+  }
   const editor = $('#editor');
   editor.hidden = !selected;
   if (selected) {
@@ -63,6 +75,7 @@ async function showSettings() {
   const result = await request({type: 'read'});
   allowed = result.allowed;
   blocked = result.blocked;
+  currentSite = result.currentSite || '';
   selected = '';
   render();
   authCard.hidden = true;
@@ -122,12 +135,27 @@ $('#add-form').addEventListener('submit', async event => {
   if (saved) {
     $('#new-domain').value = '';
     $('#filter').value = 'all';
+    $('#search').value = '';
     selected = domain;
     render();
   }
 });
 
 $('#filter').addEventListener('change', render);
+$('#search').addEventListener('input', render);
+$('#current-site-action').addEventListener('click', () => {
+  if (allowed.includes(currentSite) || blocked.includes(currentSite)) {
+    $('#filter').value = 'all';
+    $('#search').value = '';
+    selected = currentSite;
+    render();
+    $('#sites').focus();
+  } else {
+    $('#new-domain').value = currentSite;
+    $('#new-allowed').checked = true;
+    $('#new-domain').focus();
+  }
+});
 $('#sites').addEventListener('change', () => { selected = $('#sites').value; render(); });
 $('#selected-allowed').addEventListener('change', async () => {
   const domain = selected;

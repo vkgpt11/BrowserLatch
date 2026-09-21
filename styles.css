@@ -18,6 +18,8 @@ button:disabled{opacity:.5;cursor:wait}:focus-visible{outline:3px solid #c38425;
 .add-form label{margin-top:0}.add-form button{margin:0;height:48px}
 .checkbox-line{display:flex;align-items:center;gap:10px;min-height:48px;margin:0;white-space:nowrap;cursor:pointer}
 .checkbox-line input{width:20px;height:20px;accent-color:#175e49;flex:none}
+.current-site{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;margin:20px 0;background:#eaf5ed;border:1px solid #cbe2d3;border-radius:12px}
+.current-site[hidden]{display:none}.current-site strong{display:block;font-size:18px;overflow-wrap:anywhere;margin:4px 0}.current-site button{margin:0;flex:none}
 .list-heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-top:30px;margin-bottom:10px}
 .list-heading label{margin:0 0 5px;font-size:13px}.list-heading>div:last-child{min-width:160px}
 .site-list{min-height:280px;padding:5px!important;line-height:1.6}
@@ -29,4 +31,4 @@ button:disabled{opacity:.5;cursor:wait}:focus-visible{outline:3px solid #c38425;
 #status,#auth-status,#change-status{font-size:14px;min-height:23px;margin-bottom:0}
 aside{border-left:3px solid #5d917a;padding:4px 20px}aside p{font-size:14px;margin-bottom:4px}
 .blocked{padding-top:12vh}.blocked button{margin-top:20px}summary{cursor:pointer;font-weight:700}
-@media(max-width:620px){body{padding:28px 16px}.card{padding:20px}.add-form{grid-template-columns:1fr}.add-form button{width:100%}.list-heading{align-items:stretch;flex-direction:column}.list-heading>div:last-child{min-width:0}.checkbox-line{min-height:36px}}
+@media(max-width:620px){body{padding:28px 16px}.card{padding:20px}.add-form{grid-template-columns:1fr}.add-form button{width:100%}.list-heading,.current-site{align-items:stretch;flex-direction:column}.list-heading>div:last-child{min-width:0}.checkbox-line{min-height:36px}}
