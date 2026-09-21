@@ -1,0 +1,4 @@
+[
+  {"id": 1, "priority": 1, "action": {"type": "block"}, "condition": {"excludedResourceTypes": ["main_frame"]}},
+  {"id": 2, "priority": 2, "action": {"type": "redirect", "redirect": {"extensionPath": "/blocked.html"}}, "condition": {"regexFilter": "^https?://", "resourceTypes": ["main_frame"]}}
+]
