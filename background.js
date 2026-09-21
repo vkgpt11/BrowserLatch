@@ -5,16 +5,28 @@ const AUTH_KEY = 'parentPassword';
 const FAILURE_KEY = 'authFailures';
 const UNLOCK_MS = 5 * 60 * 1000;
 let unlockedUntil = 0;
+let queue = Promise.resolve();
 
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 chrome.runtime.onInstalled.addListener(({reason}) => {
   chrome.storage.local.setAccessLevel?.({accessLevel: 'TRUSTED_CONTEXTS'});
   if (reason === 'install') chrome.runtime.openOptionsPage();
+  if (reason === 'update') {
+    const migration = queue.then(async () => {
+      const rules = await chrome.declarativeNetRequest.getDynamicRules();
+      const domains = rules.find(rule => rule.id === 100)?.condition.requestDomains ?? [];
+      if (!domains.length || rules.some(rule => rule.id === 101)) return;
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(domains)
+      });
+    });
+    queue = migration.catch(error => console.error('Could not update allowlist rules:', error));
+    return migration;
+  }
 });
 
 // Dynamic rules are the single source of truth and persist across browser restarts.
 // Serialize saves; a failed atomic rule update leaves the previous list intact.
-let queue = Promise.resolve();
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('options.html')) return;
   if (!['status', 'setup', 'unlock', 'lock', 'read', 'save', 'changePassword'].includes(message?.type)) return;

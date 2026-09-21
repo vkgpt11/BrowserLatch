@@ -34,7 +34,15 @@ test('empty list creates no exceptions; allowed destinations include main frames
   const [allow] = buildRules(['example.com']);
   assert.equal(allow.action.type, 'allow');
   assert.deepEqual(allow.condition.requestDomains, ['example.com']);
-  assert.deepEqual(allow.condition.excludedResourceTypes, []);
+  assert.ok(allow.condition.resourceTypes.includes('main_frame'));
+  assert.ok(allow.condition.resourceTypes.includes('xmlhttprequest'));
+  assert.equal(allow.condition.excludedResourceTypes, undefined);
+  const supporting = buildRules(['youtube.com'])[1];
+  assert.deepEqual(supporting.condition.initiatorDomains, ['youtube.com']);
+  assert.ok(supporting.condition.resourceTypes.includes('media'));
+  assert.ok(supporting.condition.resourceTypes.includes('xmlhttprequest'));
+  assert.equal(supporting.condition.resourceTypes.includes('main_frame'), false);
+  assert.equal(supporting.condition.resourceTypes.includes('sub_frame'), false);
   const baseline = JSON.parse(await readFile(new URL('../rules.json', import.meta.url)));
   assert.ok(baseline.every(rule => rule.priority < allow.priority));
   assert.equal(baseline[0].action.type, 'block');
@@ -42,10 +50,10 @@ test('empty list creates no exceptions; allowed destinations include main frames
   assert.ok(new RegExp(baseline[1].condition.regexFilter).test('https://unlisted.test/'));
 });
 test('worker protects rules, rejects foreign senders and preserves rules after failures', async () => {
-  let listener, persisted = [], fail = false, local = {};
+  let listener, installedListener, persisted = [], fail = false, local = {};
   const chrome = {
     action: {onClicked: {addListener() {}}},
-    runtime: {id: 'unit-test', getURL: path => `chrome-extension://unit-test/${path}`, openOptionsPage() {}, onInstalled: {addListener() {}}, onMessage: {addListener(fn) {listener = fn;}}},
+    runtime: {id: 'unit-test', getURL: path => `chrome-extension://unit-test/${path}`, openOptionsPage() {}, onInstalled: {addListener(fn) {installedListener = fn;}}, onMessage: {addListener(fn) {listener = fn;}}},
     storage: {local: {setAccessLevel() {}, get: async keys => Object.fromEntries(keys.filter(key => key in local).map(key => [key, structuredClone(local[key])])), set: async values => Object.assign(local, structuredClone(values))}},
     declarativeNetRequest: {
       getDynamicRules: async () => structuredClone(persisted),
@@ -74,12 +82,17 @@ test('worker protects rules, rejects foreign senders and preserves rules after f
   assert.equal((await send({type: 'unlock', password: 'parent passphrase'})).ok, false);
   assert.equal((await send({type: 'unlock', password: 'replacement passphrase'})).ok, true);
   assert.deepEqual((await send({type: 'read'})).domains, ['example.com']);
+  persisted = [{id: 100, priority: 3, action: {type: 'allow'}, condition: {requestDomains: ['youtube.com'], excludedResourceTypes: []}}];
+  await installedListener({reason: 'update'});
+  assert.deepEqual((await send({type: 'read'})).domains, ['youtube.com']);
+  assert.ok(persisted[0].condition.resourceTypes.includes('main_frame'));
+  assert.deepEqual(persisted[1].condition.initiatorDomains, ['youtube.com']);
   fail = true;
   assert.equal((await send({type: 'save', text: 'other.test'})).ok, false);
-  assert.deepEqual((await send({type: 'read'})).domains, ['example.com']);
+  assert.deepEqual((await send({type: 'read'})).domains, ['youtube.com']);
   fail = false;
   assert.equal((await send({type: 'save', text: '*.com'})).ok, false);
-  assert.deepEqual((await send({type: 'read'})).domains, ['example.com']);
+  assert.deepEqual((await send({type: 'read'})).domains, ['youtube.com']);
   await send({type: 'save', text: ''});
   assert.equal((await send({type: 'read'})).domains.length, 0);
 });

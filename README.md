@@ -4,7 +4,7 @@
 
 For parental tamper resistance, see [administrator setup](ADMIN_SETUP.md).
 
-Store submission is pending. Automated tests do not replace live Edge installation and network checks below.
+The extension is published in Microsoft Edge Add-ons. Automated tests do not replace live Edge installation and network checks below.
 
 ## Install
 
@@ -19,8 +19,8 @@ If using the ZIP, extract it first and select the extracted folder containing ma
 
 - A listed domain permits that domain and its subdomains, on all ports and paths. For example, `example.com` allows `www.example.com` but never `example.com.attacker.test` or `notexample.com`.
 - Enter domains only, not URLs, paths, ports or wildcard patterns. Internationalized domains are converted to ASCII (punycode).
-- All unlisted HTTP/HTTPS page navigations redirect to a local blocked page. Unlisted embedded frames, images, scripts, API requests and other browser-exposed network requests are blocked.
-- Third-party dependencies must be explicitly allowed. If a site partly loads or login fails, add the domains it needs. There is no automatic third-party exemption.
+- All unlisted HTTP/HTTPS page navigations redirect to a local blocked page. Unlisted embedded frames remain blocked.
+- A listed page can load supporting scripts, images, video streams and API requests from other domains. This makes sites such as YouTube work without separately listing each supporting domain. It does not allow navigating to those domains as websites.
 - An empty list denies all websites. Rules work without a running background worker, persist across restarts, and update atomically. Failed saves retain the previous rules.
 - The password is salted and processed locally with PBKDF2-SHA-256. Settings automatically relock after five minutes, and repeated incorrect attempts trigger increasing delays.
 - There is no password recovery. Uninstalling and reinstalling resets the password and allowlist.
@@ -37,7 +37,7 @@ The password makes casual changes harder, but this is not tamper-proof parental 
 3. Add `wikipedia.org`; verify it and its subdomains are allowed.
 4. Remove `example.com` and revisit it: expect blocking. Restart Edge and repeat.
 5. Enter `https://example.com/path` or `*.com`: saving must fail and retain the old rules.
-6. Confirm unlisted images/API hosts are blocked using Edge DevTools Network panel.
+6. Confirm a listed site such as youtube.com can load video resources, while direct navigation to an unlisted supporting domain is blocked.
 
 Run automated policy and worker tests with `node --test tests/policy.test.mjs`.
 
