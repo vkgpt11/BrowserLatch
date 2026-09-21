@@ -1,1 +1,32 @@
-:root{color-scheme:light;font-family:system-ui,sans-serif;color:#173432;background:#eef3ef}*{box-sizing:border-box}body{margin:0;padding:48px 24px}main{max-width:720px;margin:0 auto}.badge{font-size:12px;letter-spacing:.16em;font-weight:750;color:#37665b}h1{font-size:clamp(36px,6vw,56px);line-height:1.08;letter-spacing:-.045em;margin:24px 0}h2{margin-top:0}p{line-height:1.65;color:#4d6560}.card{background:#fff;border:1px solid #d4dfd7;border-radius:18px;padding:28px;margin:28px 0}.compact{padding:20px 28px}form{margin:0}label{display:block;font-size:16px;font-weight:700;margin:14px 0 7px}.hint{font-size:13px}input,textarea{width:100%;border:1px solid #9eb5aa;border-radius:8px;padding:13px;font:15px/1.6 system-ui;color:#173432;background:#fbfdfb}textarea{min-height:230px;resize:vertical;font-family:ui-monospace,monospace}button{border:0;border-radius:8px;background:#175e49;color:white;padding:13px 20px;font:600 14px system-ui;cursor:pointer;margin-top:16px}button:hover{background:#104c3a}.secondary{background:#dfe9e3;color:#173432}.secondary:hover{background:#ccdcd2}button:disabled{opacity:.5;cursor:wait}:focus-visible{outline:3px solid #c38425;outline-offset:3px}.actions{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:18px}.actions button{margin-top:0}#count{font-size:13px;color:#4d6560}#status,#auth-status,#change-status{font-size:14px;min-height:23px;margin-bottom:0}aside{border-left:3px solid #5d917a;padding:4px 20px}aside p{font-size:14px;margin-bottom:4px}.blocked{padding-top:12vh}.blocked button{margin-top:20px}summary{cursor:pointer;font-weight:700}
+:root{color-scheme:light;font-family:system-ui,sans-serif;color:#173432;background:#eef3ef}
+*{box-sizing:border-box}
+body{margin:0;padding:48px 24px}
+main{max-width:760px;margin:0 auto}
+.badge{font-size:12px;letter-spacing:.16em;font-weight:750;color:#37665b}
+h1{font-size:clamp(36px,6vw,56px);line-height:1.08;letter-spacing:-.045em;margin:24px 0}
+h2{margin:0 0 10px}h3{margin:0;font-size:17px}
+p{line-height:1.6;color:#4d6560}
+.card{background:#fff;border:1px solid #d4dfd7;border-radius:18px;padding:28px;margin:28px 0;box-shadow:0 8px 28px #17343209}
+.compact{padding:20px 28px}form{margin:0}
+label{display:block;font-size:15px;font-weight:700;margin:14px 0 7px}
+.hint{font-size:13px}code{background:#e8f1ea;padding:2px 5px;border-radius:4px}
+input:not([type=checkbox]),select{width:100%;border:1px solid #9eb5aa;border-radius:8px;padding:12px;font:15px/1.5 system-ui;color:#173432;background:#fbfdfb}
+button{border:0;border-radius:8px;background:#175e49;color:white;padding:12px 18px;font:600 14px system-ui;cursor:pointer;margin-top:16px}
+button:hover{background:#104c3a}.secondary{background:#dfe9e3;color:#173432}.secondary:hover{background:#ccdcd2}
+button:disabled{opacity:.5;cursor:wait}:focus-visible{outline:3px solid #c38425;outline-offset:3px}
+.add-form{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:end;margin-top:20px}
+.add-form label{margin-top:0}.add-form button{margin:0;height:48px}
+.checkbox-line{display:flex;align-items:center;gap:10px;min-height:48px;margin:0;white-space:nowrap;cursor:pointer}
+.checkbox-line input{width:20px;height:20px;accent-color:#175e49;flex:none}
+.list-heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-top:30px;margin-bottom:10px}
+.list-heading label{margin:0 0 5px;font-size:13px}.list-heading>div:last-child{min-width:160px}
+.site-list{min-height:280px;padding:5px!important;line-height:1.6}
+.site-list option{padding:9px 10px;border-radius:5px;white-space:normal}
+.site-editor{margin-top:18px;padding:18px;border:1px solid #d4dfd7;border-radius:12px;background:#f6faf7}
+.site-editor>div{display:flex;align-items:center;gap:12px;flex-wrap:wrap;overflow-wrap:anywhere}
+.site-editor .secondary{margin-top:0}.state-pill{font-size:12px;font-weight:700;color:#0d6240;background:#d8f2e2;padding:5px 9px;border-radius:99px}
+.state-pill.blocked-state{color:#8f372d;background:#fde9e5}
+#status,#auth-status,#change-status{font-size:14px;min-height:23px;margin-bottom:0}
+aside{border-left:3px solid #5d917a;padding:4px 20px}aside p{font-size:14px;margin-bottom:4px}
+.blocked{padding-top:12vh}.blocked button{margin-top:20px}summary{cursor:pointer;font-weight:700}
+@media(max-width:620px){body{padding:28px 16px}.card{padding:20px}.add-form{grid-template-columns:1fr}.add-form button{width:100%}.list-heading{align-items:stretch;flex-direction:column}.list-heading>div:last-child{min-width:0}.checkbox-line{min-height:36px}}

@@ -10,7 +10,7 @@ The extension is published in Microsoft Edge Add-ons. Automated tests do not rep
 
 1. Open `edge://extensions` in desktop Microsoft Edge.
 2. Enable **Developer mode**, select **Load unpacked**, and choose this folder (the one containing `manifest.json`).
-3. The settings page opens automatically. Create a parent password, enter allowed domains one per line, and click **Save allowlist**. The initial empty list blocks all websites.
+3. The settings page opens automatically. Create a parent password, enter a domain, choose its **Allow this website** checkbox, and click **Add website**. The initial empty list blocks all websites.
 4. Use the extension toolbar button or its **Extension options** to edit the list later.
 
 If using the ZIP, extract it first and select the extracted folder containing manifest.json. Keep that folder in place while the extension is installed.
@@ -19,9 +19,11 @@ If using the ZIP, extract it first and select the extracted folder containing ma
 
 - A listed domain permits that domain and its subdomains, on all ports and paths. For example, `example.com` allows `www.example.com` but never `example.com.attacker.test` or `notexample.com`.
 - Enter domains only, not URLs, paths, ports or wildcard patterns. Internationalized domains are converted to ASCII (punycode).
+- The settings list shows allowed and explicitly blocked domains. Filter it with **Show**, select an entry, then change its checkbox or remove it. Changes save immediately.
+- Explicitly blocked domains override allowed parent domains. For example, you can allow `example.com` but block `kids.example.com`. Unlisted websites are blocked by default, so you do not need to add every unwanted website individually.
 - All unlisted HTTP/HTTPS page navigations redirect to a local blocked page. Unlisted embedded frames remain blocked.
 - A listed page can load supporting scripts, images, video streams and API requests from other domains. This makes sites such as YouTube work without separately listing each supporting domain. It does not allow navigating to those domains as websites.
-- An empty list denies all websites. Rules work without a running background worker, persist across restarts, and update atomically. Failed saves retain the previous rules.
+- An empty allowed list denies all websites. Rules work without a running background worker, persist across restarts, and update atomically. Failed saves retain the previous rules.
 - The password is salted and processed locally with PBKDF2-SHA-256. Settings automatically relock after five minutes, and repeated incorrect attempts trigger increasing delays.
 - There is no password recovery. Uninstalling and reinstalling resets the password and allowlist.
 - No analytics, external services, sync, or collection of browsing history. Rules are stored locally by Edge.
@@ -33,10 +35,10 @@ The password makes casual changes harder, but this is not tamper-proof parental 
 ## Verify in Edge
 
 1. With an empty list, visit `https://example.com`: expect the blocked page.
-2. Save `example.com`; revisit it: expect it to load. Visit `https://www.wikipedia.org`: expect blocking.
-3. Add `wikipedia.org`; verify it and its subdomains are allowed.
+2. Add `example.com` with **Allow this website** checked; revisit it: expect it to load. Visit `https://www.wikipedia.org`: expect blocking.
+3. Add `www.example.com` with the checkbox unchecked; verify that it is blocked despite its allowed parent domain. Flip the selected entry's checkbox and verify that it loads again.
 4. Remove `example.com` and revisit it: expect blocking. Restart Edge and repeat.
-5. Enter `https://example.com/path` or `*.com`: saving must fail and retain the old rules.
+5. Enter `https://example.com/path` or `*.com`: adding must fail and retain the old rules.
 6. Confirm a listed site such as youtube.com can load video resources, while direct navigation to an unlisted supporting domain is blocked.
 
 Run automated policy and worker tests with `node --test tests/policy.test.mjs`.

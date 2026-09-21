@@ -68,12 +68,16 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       return {ok: true, configured: true, unlocked: true};
     }
     if (message.type === 'save') {
-      const domains = parseDomains(message.text);
+      const domains = parseDomains(message.allowed ?? message.text);
+      const blocked = parseDomains(message.blocked ?? '');
+      if (domains.some(domain => blocked.includes(domain))) throw new Error('A domain cannot be both allowed and blocked.');
       const current = await chrome.declarativeNetRequest.getDynamicRules();
-      await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: current.map(rule => rule.id), addRules: buildRules(domains)});
+      await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: current.map(rule => rule.id), addRules: buildRules(domains, blocked)});
     }
     const rules = await chrome.declarativeNetRequest.getDynamicRules();
-    return {ok: true, configured: true, unlocked: true, domains: rules.find(rule => rule.id === 100)?.condition.requestDomains ?? []};
+    const allowed = rules.find(rule => rule.id === 100)?.condition.requestDomains ?? [];
+    const blocked = rules.find(rule => rule.id === 102)?.condition.requestDomains ?? [];
+    return {ok: true, configured: true, unlocked: true, allowed, blocked, domains: allowed};
   });
   queue = job.catch(() => {});
   job.then(respond, error => respond({ok: false, error: error.message}));

@@ -49,6 +49,18 @@ test('empty list creates no exceptions; allowed destinations include main frames
   assert.deepEqual(baseline[0].condition.excludedResourceTypes, ['main_frame']);
   assert.ok(new RegExp(baseline[1].condition.regexFilter).test('https://unlisted.test/'));
 });
+test('explicit blocked domains override parent-domain allowances', () => {
+  const rules = buildRules(['example.com'], ['kids.example.com']);
+  assert.deepEqual(rules.map(rule => rule.id), [100, 101, 102, 103]);
+  assert.ok(rules[2].priority > rules[0].priority);
+  assert.deepEqual(rules[2].condition.requestDomains, ['kids.example.com']);
+  assert.deepEqual(rules[2].condition.resourceTypes, ['main_frame']);
+  assert.equal(rules[2].action.redirect.extensionPath, '/blocked.html');
+  assert.equal(rules[3].action.type, 'block');
+  assert.ok(rules[3].condition.resourceTypes.includes('media'));
+  assert.equal(rules[3].condition.resourceTypes.includes('main_frame'), false);
+  assert.deepEqual(buildRules([], ['example.com']).map(rule => rule.id), [102, 103]);
+});
 test('worker protects rules, rejects foreign senders and preserves rules after failures', async () => {
   let listener, installedListener, persisted = [], fail = false, local = {};
   const chrome = {
@@ -87,12 +99,17 @@ test('worker protects rules, rejects foreign senders and preserves rules after f
   assert.deepEqual((await send({type: 'read'})).domains, ['youtube.com']);
   assert.ok(persisted[0].condition.resourceTypes.includes('main_frame'));
   assert.deepEqual(persisted[1].condition.initiatorDomains, ['youtube.com']);
+  assert.equal((await send({type: 'save', allowed: 'example.com', blocked: 'kids.example.com'})).ok, true);
+  assert.deepEqual((await send({type: 'read'})).allowed, ['example.com']);
+  assert.deepEqual((await send({type: 'read'})).blocked, ['kids.example.com']);
+  assert.equal((await send({type: 'save', allowed: 'example.com', blocked: 'example.com'})).ok, false);
+  assert.deepEqual((await send({type: 'read'})).blocked, ['kids.example.com']);
   fail = true;
   assert.equal((await send({type: 'save', text: 'other.test'})).ok, false);
-  assert.deepEqual((await send({type: 'read'})).domains, ['youtube.com']);
+  assert.deepEqual((await send({type: 'read'})).domains, ['example.com']);
   fail = false;
   assert.equal((await send({type: 'save', text: '*.com'})).ok, false);
-  assert.deepEqual((await send({type: 'read'})).domains, ['youtube.com']);
+  assert.deepEqual((await send({type: 'read'})).domains, ['example.com']);
   await send({type: 'save', text: ''});
   assert.equal((await send({type: 'read'})).domains.length, 0);
 });

@@ -16,14 +16,14 @@ export function parseDomains(text) {
   return [...domains].sort();
 }
 
-export function buildRules(domains) {
+export function buildRules(domains, blocked = []) {
   // DNR otherwise excludes main_frame by default. An empty excludedResourceTypes
   // list is ambiguous across browser versions, so enumerate every supported type.
   const resourceTypes = ['main_frame', 'sub_frame', 'stylesheet', 'script', 'image',
     'font', 'object', 'xmlhttprequest', 'ping', 'csp_report', 'media',
     'websocket', 'webtransport', 'webbundle', 'other'];
-  if (!domains.length) return [];
-  return [
+  const rules = [];
+  if (domains.length) rules.push(
     {id: 100, priority: 3, action: {type: 'allow'}, condition: {requestDomains: domains, resourceTypes}},
     // Sites such as YouTube need scripts/video from other hosts. Permit those
     // resources when the initiating page is listed, but keep off-list frames
@@ -31,5 +31,12 @@ export function buildRules(domains) {
     {id: 101, priority: 3, action: {type: 'allow'}, condition: {
       initiatorDomains: domains, resourceTypes: resourceTypes.filter(type => type !== 'main_frame' && type !== 'sub_frame')
     }}
-  ];
+  );
+  if (blocked.length) rules.push(
+    {id: 102, priority: 4, action: {type: 'redirect', redirect: {extensionPath: '/blocked.html'}},
+      condition: {requestDomains: blocked, resourceTypes: ['main_frame']}},
+    {id: 103, priority: 4, action: {type: 'block'},
+      condition: {requestDomains: blocked, resourceTypes: resourceTypes.filter(type => type !== 'main_frame')}}
+  );
+  return rules;
 }
