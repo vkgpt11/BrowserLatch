@@ -5,7 +5,7 @@ Effective date: September 21, 2026.
 Only Listed Websites is a Microsoft Edge extension that restricts web requests to domains you allow.
 
 ## Information used locally
-The domains you enter are stored in Microsoft Edge's local extension rules. Edge compares web requests against those rules to allow or block them. The extension does not create a browsing-history log or read webpage contents.
+The domains you enter are stored in Microsoft Edge's local extension rules. A salted password verifier and failed-attempt counters are stored locally in the browser profile. The password itself is never stored. Edge compares web requests against the rules to allow or block them. The extension does not create a browsing-history log or read webpage contents.
 
 ## Collection and sharing
 The extension does not send your allowlist, browsing activity or personal information to the publisher or third parties. It contains no analytics, advertising, remote code, account system or external service integration. Allowed websites and Microsoft Edge operate under their own privacy practices.

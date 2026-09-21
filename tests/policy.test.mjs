@@ -2,7 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
+import {webcrypto} from 'node:crypto';
 import {parseDomains, buildRules} from '../policy.mjs';
+import {createPasswordRecord, verifyPassword, validatePassword} from '../auth.mjs';
+
+globalThis.crypto ??= webcrypto;
+
+test('password records are salted and verify without storing plaintext', async () => {
+  assert.throws(() => validatePassword('short'));
+  const first = await createPasswordRecord('correct horse');
+  const second = await createPasswordRecord('correct horse');
+  assert.notEqual(first.salt, second.salt);
+  assert.notEqual(first.hash, second.hash);
+  assert.equal(JSON.stringify(first).includes('correct horse'), false);
+  assert.equal(await verifyPassword('correct horse', first), true);
+  assert.equal(await verifyPassword('wrong password', first), false);
+});
 
 test('normalizes, deduplicates and supports international domains', () => {
   assert.deepEqual(parseDomains('EXAMPLE.com\nexample.com\n\nbücher.de'), ['example.com', 'xn--bcher-kva.de']);
@@ -26,24 +41,38 @@ test('empty list creates no exceptions; allowed destinations include main frames
   assert.deepEqual(baseline[0].condition.excludedResourceTypes, ['main_frame']);
   assert.ok(new RegExp(baseline[1].condition.regexFilter).test('https://unlisted.test/'));
 });
-test('worker persists rules, rejects foreign senders and preserves rules after failures', async () => {
-  let listener, persisted = [], fail = false;
+test('worker protects rules, rejects foreign senders and preserves rules after failures', async () => {
+  let listener, persisted = [], fail = false, local = {};
   const chrome = {
     action: {onClicked: {addListener() {}}},
-    runtime: {id: 'unit-test', getURL: path => `chrome-extension://unit-test/${path}`, onInstalled: {addListener() {}}, onMessage: {addListener(fn) {listener = fn;}}},
+    runtime: {id: 'unit-test', getURL: path => `chrome-extension://unit-test/${path}`, openOptionsPage() {}, onInstalled: {addListener() {}}, onMessage: {addListener(fn) {listener = fn;}}},
+    storage: {local: {setAccessLevel() {}, get: async keys => Object.fromEntries(keys.filter(key => key in local).map(key => [key, structuredClone(local[key])])), set: async values => Object.assign(local, structuredClone(values))}},
     declarativeNetRequest: {
       getDynamicRules: async () => structuredClone(persisted),
       updateDynamicRules: async ({addRules}) => {if (fail) throw new Error('Rejected update'); persisted = structuredClone(addRules);}
     }
   };
-  const source = (await readFile(new URL('../background.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/, '');
-  const start = () => vm.runInNewContext(source, {chrome, parseDomains, buildRules});
+  const source = (await readFile(new URL('../background.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '');
+  const start = () => vm.runInNewContext(source, {chrome, parseDomains, buildRules, createPasswordRecord, verifyPassword, Date});
   start();
   const sender = {id: chrome.runtime.id, url: chrome.runtime.getURL('options.html')};
   const send = message => new Promise(resolve => listener(message, sender, resolve));
   assert.equal(listener({type: 'save', text: 'evil.test'}, {id: 'foreign'}, () => assert.fail()), undefined);
+  assert.equal((await send({type: 'status'})).configured, false);
+  assert.equal((await send({type: 'save', text: 'example.com'})).ok, false);
+  assert.equal((await send({type: 'setup', password: 'parent passphrase'})).ok, true);
   assert.equal((await send({type: 'save', text: 'example.com'})).ok, true);
-  start(); // Simulate a worker restart; browser-owned rules survive.
+  await send({type: 'lock'});
+  assert.equal((await send({type: 'read'})).ok, false);
+  for (let attempt = 0; attempt < 5; attempt++) assert.equal((await send({type: 'unlock', password: 'wrong password'})).ok, false);
+  assert.ok((await send({type: 'status'})).retryAfterMs > 0);
+  assert.equal((await send({type: 'unlock', password: 'parent passphrase'})).ok, false);
+  local.authFailures = {count: 0, lockedUntil: 0};
+  assert.equal((await send({type: 'unlock', password: 'parent passphrase'})).ok, true);
+  assert.equal((await send({type: 'changePassword', currentPassword: 'parent passphrase', newPassword: 'replacement passphrase'})).ok, true);
+  await send({type: 'lock'});
+  assert.equal((await send({type: 'unlock', password: 'parent passphrase'})).ok, false);
+  assert.equal((await send({type: 'unlock', password: 'replacement passphrase'})).ok, true);
   assert.deepEqual((await send({type: 'read'})).domains, ['example.com']);
   fail = true;
   assert.equal((await send({type: 'save', text: 'other.test'})).ok, false);

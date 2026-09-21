@@ -2,13 +2,15 @@
 
 [Privacy policy](PRIVACY.md) · Support: vikasgupta.net@live.com
 
+For parental tamper resistance, see [administrator setup](ADMIN_SETUP.md).
+
 Store submission is pending. Automated tests do not replace live Edge installation and network checks below.
 
 ## Install
 
 1. Open `edge://extensions` in desktop Microsoft Edge.
 2. Enable **Developer mode**, select **Load unpacked**, and choose this folder (the one containing `manifest.json`).
-3. The settings page opens automatically. Enter allowed domains, one per line, and click **Save allowlist**. The initial empty list blocks all websites.
+3. The settings page opens automatically. Create a parent password, enter allowed domains one per line, and click **Save allowlist**. The initial empty list blocks all websites.
 4. Use the extension toolbar button or its **Extension options** to edit the list later.
 
 If using the ZIP, extract it first and select the extracted folder containing manifest.json. Keep that folder in place while the extension is installed.
@@ -20,11 +22,13 @@ If using the ZIP, extract it first and select the extracted folder containing ma
 - All unlisted HTTP/HTTPS page navigations redirect to a local blocked page. Unlisted embedded frames, images, scripts, API requests and other browser-exposed network requests are blocked.
 - Third-party dependencies must be explicitly allowed. If a site partly loads or login fails, add the domains it needs. There is no automatic third-party exemption.
 - An empty list denies all websites. Rules work without a running background worker, persist across restarts, and update atomically. Failed saves retain the previous rules.
+- The password is salted and processed locally with PBKDF2-SHA-256. Settings automatically relock after five minutes, and repeated incorrect attempts trigger increasing delays.
+- There is no password recovery. Uninstalling and reinstalling resets the password and allowlist.
 - No analytics, external services, sync, or collection of browsing history. Rules are stored locally by Edge.
 
 ## Scope and limitations
 
-This is a personal browser restriction, not tamper-proof parental control or a system firewall. Anyone with access to extension settings can change the list, disable the extension, or use another browser/profile. Edge internal pages, other extension pages, local files and browser-protected traffic are outside its web-blocking scope. InPrivate requires enabling **Allow in InPrivate** on the extension details page. Existing loaded/cached content and service-worker-generated responses may remain visible; close or reload existing tabs after installation or list changes. Other installed extensions can also affect request handling.
+The password makes casual changes harder, but this is not tamper-proof parental control or a system firewall. Anyone who can manage Edge extensions can disable or remove it, clear the profile, or use another browser/profile. Use a child Windows account with Microsoft Family Safety or administrator-enforced Edge policies when removal must be prevented. Edge internal pages, other extension pages, local files and browser-protected traffic are outside its web-blocking scope. InPrivate requires enabling **Allow in InPrivate** on the extension details page. Existing loaded/cached content and service-worker-generated responses may remain visible; close or reload existing tabs after installation or list changes. Other installed extensions can also affect request handling.
 
 ## Verify in Edge
 
