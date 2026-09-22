@@ -2,26 +2,34 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BrowseLatch website rules</title><link rel="stylesheet" href="styles.css"></head>
 <body><main>
-<span class="badge">BROWSELATCH</span><h1>Your browser.<br>Your boundaries.</h1>
+<header class="page-header"><div><div class="brand"><img src="icons/icon48.png" width="40" height="40" alt=""><span class="badge">BROWSELATCH</span></div><h1>Website access</h1><p>Choose how this browser handles websites.</p></div><span id="access-status" class="access-status" hidden></span></header>
 <section id="auth-card" class="card">
-  <div id="setup-panel" hidden><h2>Create a parent password</h2><p>This password is required to view or change website rules.</p><form id="setup-form"><label for="new-password">New password</label><input id="new-password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required><label for="confirm-password">Confirm password</label><input id="confirm-password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required><button>Create password</button></form></div>
+  <div id="setup-panel" hidden><h2>Create a parent password</h2><p>The password is required to view or change website rules.</p><form id="setup-form"><label for="new-password">New password</label><input id="new-password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required><label for="confirm-password">Confirm password</label><input id="confirm-password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required><button>Create password</button></form></div>
   <div id="unlock-panel" hidden><h2>Parent access</h2><p>Enter the parent password to manage websites.</p><form id="unlock-form"><label for="password">Password</label><input id="password" type="password" maxlength="128" autocomplete="current-password" required><button id="unlock">Unlock settings</button></form></div>
   <p id="auth-status" role="status" aria-live="polite">Checking protection…</p>
 </section>
 <section id="settings" hidden>
   <div class="card">
-    <h2>Website rules</h2><p class="hint">Add a domain such as <strong>youtube.com</strong>. Subdomains are included. Enter a domain only, without <code>https://</code> or a path.</p>
-    <div id="current-site-box" class="current-site" hidden><div><span class="badge">CURRENT WEBSITE</span><strong id="current-site-domain"></strong><span id="current-site-state" class="hint"></span></div><button id="current-site-action" type="button" class="secondary">Use this website</button></div>
-    <form id="add-form" class="add-form"><div><label for="new-domain">Website domain</label><input id="new-domain" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="example.com" required></div><label class="checkbox-line" for="new-allowed"><input id="new-allowed" type="checkbox" checked><span>Allow this website</span></label><button id="add" type="submit">Add website</button></form>
-    <div class="list-heading"><div><h3>Saved websites</h3><span id="count" class="hint"></span></div><div><label for="filter">Show</label><select id="filter"><option value="all">All websites</option><option value="allowed">Allowed only</option><option value="blocked">Blocked only</option></select></div></div>
-    <label for="search">Find a website</label><input id="search" type="search" placeholder="Search saved domains" autocomplete="off"><p id="match-count" class="hint" aria-live="polite"></p>
-    <select id="sites" class="site-list" size="9" aria-label="Saved website rules" aria-describedby="list-help"></select>
-    <p id="list-help" class="hint">Select a website to change its checkbox. Changes save immediately.</p>
-    <div id="editor" class="site-editor" hidden><div><strong id="selected-domain"></strong><span id="selected-state" class="state-pill"></span></div><label class="checkbox-line" for="selected-allowed"><input id="selected-allowed" type="checkbox"><span>Allow this website</span></label><button id="remove" type="button" class="secondary">Remove from list</button></div>
-    <p id="status" role="status" aria-live="polite"></p><button id="lock" type="button" class="secondary">Lock settings</button>
+    <div class="section-heading"><div><h2>How should the list work?</h2><p id="mode-summary" class="hint"></p></div><button id="lock" type="button" class="secondary">Lock now</button></div>
+    <form id="mode-form" class="mode-form"><label for="mode-select">Active mode</label><select id="mode-select"><option value="allow">Allowlist — only listed websites open</option><option value="block">Blocklist — listed websites are blocked</option></select><button id="apply-mode" type="submit">Apply mode</button></form>
+    <p class="hint">Changing mode requires confirmation because it changes what happens to every unlisted website. Each mode remembers its own list.</p>
+    <div id="legacy-note" class="notice" hidden><strong>Choose a mode to finish upgrading.</strong><p>Your older setup has both allowed and blocked entries. Only one list can be active now. If an allowed parent contains a blocked child, that parent will be left off the Allowlist to avoid opening the blocked child. The original entries are kept locally for reference.</p><p id="legacy-counts"></p></div>
   </div>
+  <div id="rules-panel" class="card" hidden>
+    <div class="section-heading"><div><h2 id="list-title">Allowed websites</h2><p id="list-description" class="hint"></p></div><span id="count" class="count-pill"></span></div>
+    <div id="current-site-box" class="current-site" hidden><div><span class="badge">CURRENT WEBSITE</span><strong id="current-site-domain"></strong><span id="current-site-state" class="hint"></span></div><button id="current-site-action" type="button" class="secondary">Use this website</button></div>
+    <form id="add-form" class="add-form"><div><label for="new-domain">Website domain</label><input id="new-domain" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="youtube.com" required><p class="hint">Enter a domain only. Subdomains are included.</p></div><button id="add" type="submit">Add to list</button></form>
+    <p id="add-preview" class="hint" aria-live="polite"></p>
+    <div class="list-heading"><h3>Saved websites</h3><div><label for="search">Find a website</label><input id="search" type="search" placeholder="Search this list" autocomplete="off"></div></div>
+    <p id="match-count" class="hint" aria-live="polite"></p>
+    <select id="sites" class="site-list" size="9" aria-label="Saved website rules" aria-describedby="list-help"></select>
+    <p id="list-help" class="hint">Select a website to inspect or remove it.</p>
+    <div id="editor" class="site-editor" hidden><div><strong id="selected-domain"></strong><span id="selected-state" class="state-pill"></span></div><p id="selected-effect" class="hint"></p><button id="remove" type="button" class="secondary">Remove from list</button></div>
+    <div class="feedback-row"><p id="status" role="status" aria-live="polite"></p><button id="undo" class="secondary" type="button" hidden>Undo last change</button></div>
+  </div>
+  <div id="check-panel" class="card" hidden><h2>Check a website</h2><p class="hint">See whether a website will open under the current rules.</p><form id="check-form" class="check-form"><label for="check-domain">Website address or domain</label><input id="check-domain" type="text" placeholder="https://www.youtube.com" spellcheck="false"><button type="submit">Check access</button></form><p id="check-result" role="status" aria-live="polite"></p></div>
+  <details id="legacy-backup" class="card compact" hidden><summary>Previous allowed entries</summary><p class="hint">These are the allowed domains from the older mixed-rule setup. Some may have been withheld from the new Allowlist because they contain previously blocked subdomains.</p><pre id="legacy-backup-list"></pre></details>
   <details class="card compact"><summary>Change parent password</summary><form id="change-form"><label for="current-password">Current password</label><input id="current-password" type="password" autocomplete="current-password" required><label for="replacement-password">New password</label><input id="replacement-password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required><button>Change password</button></form><p id="change-status" role="status" aria-live="polite"></p></details>
-  <aside><strong>How the rules work</strong><p>Websites outside the allowed list are blocked by default. Explicitly blocked domains take priority, including when a parent domain is allowed. Allowed pages may load supporting resources from other domains. Settings relock after five minutes.</p></aside>
 </section>
-<p class="hint">The password protects these settings, but an extension cannot prevent removal from Edge. Use a child Windows account with Microsoft Family Safety or administrator-enforced Edge policies for tamper resistance.</p>
+<p class="hint footer-note">The password makes casual changes harder. For protection against extension removal, use a child Windows account and administrator-enforced Edge policies.</p>
 </main><script src="options.js"></script></body></html>

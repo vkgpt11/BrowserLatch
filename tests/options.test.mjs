@@ -7,118 +7,165 @@ import {parseDomains} from '../policy.mjs';
 const html = await readFile(new URL('../options.html', import.meta.url), 'utf8');
 const script = await readFile(new URL('../options.js', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+const openWindows = new Set();
+test.afterEach(() => { for (const window of openWindows) window.close(); openWindows.clear(); });
 
-async function createPage({allowed = [], blocked = [], currentSite = ''} = {}) {
+async function createPage({mode = 'allow', domains = [], currentSite = '', legacyAllowed = [], legacyBlocked = [], expiryOffsetMs = 300000} = {}) {
   const dom = new JSDOM(html, {url: 'https://extension.test/options.html', runScripts: 'outside-only'});
-  const document = dom.window.document;
-  const state = {allowed, blocked, currentSite, saves: [], failSave: false};
-  dom.window.chrome = {runtime: {sendMessage: async message => {
-    if (message.type === 'status') return {ok: true, configured: true, unlocked: true};
-    if (message.type === 'read') return {ok: true, allowed: state.allowed, blocked: state.blocked, currentSite: state.currentSite};
+  openWindows.add(dom.window);
+  const state = {mode, domains, currentSite, legacyAllowed, legacyBlocked, saved: {allow: [], block: []}, revision: 1, unlocked: true, failSave: false, expiryOffsetMs};
+  let onStorageChanged;
+  dom.window.confirm = () => true;
+  dom.window.chrome = {storage: {onChanged: {addListener(fn) {onStorageChanged = fn;}}}, runtime: {sendMessage: async message => {
+    if (message.type === 'status') return {ok: true, configured: true, unlocked: state.unlocked, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, revision: String(state.revision), currentSite: state.currentSite, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'lock') {state.unlocked = false; return {ok: true};}
+    if (!state.unlocked) return {ok: false, error: 'Settings are locked.'};
+    if (message.revision !== String(state.revision)) return {ok: false, error: 'The list changed in another tab. Reload settings before saving.'};
     if (message.type === 'save') {
-      state.saves.push(message);
       if (state.failSave) return {ok: false, error: 'Rejected update'};
-      try {
-        const nextAllowed = parseDomains(message.allowed);
-        const nextBlocked = parseDomains(message.blocked);
-        if (nextAllowed.some(domain => nextBlocked.includes(domain))) throw new Error('A domain cannot be both allowed and blocked.');
-        state.allowed = nextAllowed;
-        state.blocked = nextBlocked;
-        return {ok: true, allowed: state.allowed, blocked: state.blocked};
-      } catch (error) { return {ok: false, error: error.message}; }
-    }
-    if (message.type === 'lock') return {ok: true};
-    return {ok: false, error: `Unexpected message: ${message.type}`};
+      try { state.domains = parseDomains(message.domains); }
+      catch (error) { return {ok: false, error: error.message}; }
+      state.revision++;
+    } else if (message.type === 'setMode') {
+      if (state.mode === 'legacy') {state.saved.allow = [...state.legacyAllowed]; state.saved.block = [...state.legacyBlocked];}
+      else state.saved[state.mode] = [...state.domains];
+      state.mode = message.mode;
+      state.domains = [...state.saved[state.mode]];
+      state.revision++;
+    } else return {ok: false, error: `Unexpected message: ${message.type}`};
+    return {ok: true, mode: state.mode, domains: state.domains, revision: String(state.revision), currentSite: '', expiresAt: Date.now() + state.expiryOffsetMs};
   }}};
   dom.window.eval(script);
   await settle();
-  const $ = selector => document.querySelector(selector);
+  const $ = selector => dom.window.document.querySelector(selector);
   const fire = (selector, type) => $(selector).dispatchEvent(new dom.window.Event(type, {bubbles: true, cancelable: true}));
-  return {dom, $, fire, state};
+  return {dom, $, fire, state, triggerSite() {onStorageChanged({pendingSite: {newValue: {host: state.currentSite}}}, 'session');}, triggerLock() {onStorageChanged({accessLockVersion: {newValue: Date.now()}}, 'session');}};
 }
 
-test('search and status filter show only matching saved websites', async () => {
-  const page = await createPage({allowed: ['example.com', 'youtube.com'], blocked: ['kids.example.com']});
+test('one active list can be searched and checked against effective access', async () => {
+  const page = await createPage({domains: ['example.com', 'youtube.com']});
   const {$, fire} = page;
-  assert.equal($('#settings').hidden, false);
-  assert.equal($('#sites').options.length, 3);
+  assert.equal($('#list-title').textContent, 'Allowed websites');
+  assert.equal($('#sites').options.length, 2);
   $('#search').value = 'YOUTUBE';
   fire('#search', 'input');
   assert.equal($('#sites').options.length, 1);
-  assert.equal($('#sites').options[0].value, 'youtube.com');
-  assert.equal($('#match-count').textContent, '1 matching website');
-  $('#search').value = '';
-  $('#filter').value = 'blocked';
-  fire('#filter', 'change');
-  assert.equal($('#sites').options.length, 1);
-  assert.equal($('#sites').options[0].value, 'kids.example.com');
+  $('#check-domain').value = 'https://www.youtube.com/watch?v=sample';
+  fire('#check-form', 'submit');
+  assert.match($('#check-result').textContent, /Allowed by youtube.com/);
+  $('#check-domain').value = 'other.test';
+  fire('#check-form', 'submit');
+  assert.match($('#check-result').textContent, /Blocked because/);
   page.dom.window.close();
 });
 
-test('checkbox changes a selected site and removing it updates the saved rules', async () => {
-  const page = await createPage({allowed: ['example.com'], blocked: ['kids.example.com']});
+test('add, remove, and undo keep the active list in sync', async () => {
+  const page = await createPage({domains: ['example.com']});
   const {$, fire, state} = page;
-  $('#sites').value = 'kids.example.com';
-  fire('#sites', 'change');
-  assert.equal($('#editor').hidden, false);
-  assert.equal($('#selected-allowed').checked, false);
-  $('#selected-allowed').checked = true;
-  fire('#selected-allowed', 'change');
+  $('#new-domain').value = 'youtube.com';
+  fire('#add-form', 'submit');
   await settle();
-  assert.deepEqual(state.allowed, ['example.com', 'kids.example.com']);
-  assert.deepEqual(state.blocked, []);
-  assert.equal($('#selected-state').textContent, 'Allowed');
+  assert.deepEqual(state.domains, ['example.com', 'youtube.com']);
+  assert.equal($('#undo').hidden, false);
+  $('#sites').value = 'youtube.com';
+  fire('#sites', 'change');
   fire('#remove', 'click');
   await settle();
-  assert.deepEqual(state.allowed, ['example.com']);
-  assert.equal($('#editor').hidden, true);
+  assert.deepEqual(state.domains, ['example.com']);
+  fire('#undo', 'click');
+  await settle();
+  assert.deepEqual(state.domains, ['example.com', 'youtube.com']);
   page.dom.window.close();
 });
 
-test('toolbar hint pre-fills the current site but does not change a rule until Add is submitted', async () => {
-  const page = await createPage({allowed: ['youtube.com'], currentSite: 'www.youtube.com'});
+test('mode switch changes default access and restores the other saved list', async () => {
+  const page = await createPage({domains: ['youtube.com']});
   const {$, fire, state} = page;
-  assert.equal($('#current-site-box').hidden, false);
-  assert.equal($('#current-site-state').textContent, 'Allowed');
-  fire('#current-site-action', 'click');
-  assert.equal($('#new-domain').value, 'www.youtube.com');
-  assert.equal(state.saves.length, 0);
+  $('#mode-select').value = 'block';
+  fire('#mode-select', 'change');
+  fire('#mode-form', 'submit');
+  await settle();
+  assert.equal(state.mode, 'block');
+  assert.deepEqual(state.domains, []);
+  assert.match($('#mode-summary').textContent, /Every other website can open/);
+  $('#new-domain').value = 'bad.test';
   fire('#add-form', 'submit');
   await settle();
-  assert.deepEqual(state.allowed, ['www.youtube.com', 'youtube.com']);
-  assert.equal($('#sites').value, 'www.youtube.com');
+  $('#check-domain').value = 'bad.test';
+  fire('#check-form', 'submit');
+  assert.match($('#check-result').textContent, /Blocked by bad.test/);
+  $('#mode-select').value = 'allow';
+  fire('#mode-select', 'change');
+  fire('#mode-form', 'submit');
+  await settle();
+  assert.deepEqual(state.domains, ['youtube.com']);
   page.dom.window.close();
 });
 
-test('current-site shortcut identifies an explicit block and selects its saved entry', async () => {
-  const page = await createPage({allowed: ['example.com'], blocked: ['kids.example.com'], currentSite: 'kids.example.com'});
-  const {$, fire} = page;
-  assert.equal($('#current-site-state').textContent, 'Blocked by a rule');
-  assert.equal($('#current-site-action').textContent, 'Edit saved entry');
-  $('#search').value = 'other';
-  fire('#search', 'input');
-  fire('#current-site-action', 'click');
-  assert.equal($('#search').value, '');
-  assert.equal($('#sites').value, 'kids.example.com');
-  assert.equal($('#selected-allowed').checked, false);
-  page.dom.window.close();
-});
-
-test('invalid entries and failed saves keep the previous rules visible', async () => {
-  const page = await createPage({allowed: ['example.com']});
+test('legacy mixed rules require a one-time choice without losing the other list', async () => {
+  const page = await createPage({mode: 'legacy', domains: ['example.com'], legacyAllowed: ['example.com'], legacyBlocked: ['kids.example.com']});
   const {$, fire, state} = page;
-  $('#new-domain').value = 'https://bad.test/path';
+  assert.equal($('#legacy-note').hidden, false);
+  assert.equal($('#rules-panel').hidden, true);
+  $('#mode-select').value = 'block';
+  fire('#mode-form', 'submit');
+  await settle();
+  assert.equal($('#legacy-note').hidden, true);
+  assert.deepEqual(state.domains, ['kids.example.com']);
+  page.dom.window.close();
+});
+
+test('invalid entries and rejected saves retain the previous list', async () => {
+  const page = await createPage({domains: ['example.com']});
+  const {$, fire, state} = page;
+  $('#new-domain').value = 'com';
   fire('#add-form', 'submit');
   await settle();
-  assert.deepEqual(state.allowed, ['example.com']);
+  assert.deepEqual(state.domains, ['example.com']);
   assert.match($('#status').textContent, /Not saved/);
   state.failSave = true;
-  $('#sites').value = 'example.com';
-  fire('#sites', 'change');
-  $('#selected-allowed').checked = false;
-  fire('#selected-allowed', 'change');
+  $('#new-domain').value = 'other.test';
+  fire('#add-form', 'submit');
   await settle();
-  assert.deepEqual(state.allowed, ['example.com']);
-  assert.equal($('#selected-allowed').checked, true);
+  assert.deepEqual(state.domains, ['example.com']);
+  page.dom.window.close();
+});
+
+test('current-site shortcut prefills the entry without changing rules', async () => {
+  const page = await createPage({domains: ['youtube.com'], currentSite: 'www.youtube.com'});
+  const {$, fire, state} = page;
+  assert.match($('#current-site-state').textContent, /Allowed by youtube.com/);
+  fire('#current-site-action', 'click');
+  assert.equal($('#new-domain').value, 'www.youtube.com');
+  assert.deepEqual(state.domains, ['youtube.com']);
+  page.dom.window.close();
+});
+
+test('an already open settings page refreshes its current-site shortcut', async () => {
+  const page = await createPage({domains: ['youtube.com']});
+  page.state.currentSite = 'new.test';
+  page.triggerSite();
+  await settle();
+  assert.equal(page.$('#current-site-domain').textContent, 'new.test');
+  page.dom.window.close();
+});
+
+test('visible website rules hide when parent access expires', async () => {
+  const page = await createPage({domains: ['youtube.com'], expiryOffsetMs: 20});
+  const {$} = page;
+  assert.equal($('#settings').hidden, false);
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.equal($('#settings').hidden, true);
+  assert.equal($('#sites').options.length, 0);
+  page.dom.window.close();
+});
+
+test('locking another settings tab hides this tab immediately', async () => {
+  const page = await createPage({domains: ['youtube.com']});
+  assert.equal(page.$('#settings').hidden, false);
+  page.triggerLock();
+  assert.equal(page.$('#settings').hidden, true);
+  assert.equal(page.$('#sites').options.length, 0);
   page.dom.window.close();
 });

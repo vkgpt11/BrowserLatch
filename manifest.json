@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "BrowseLatch: Website Allowlist",
-  "version": "1.4.0",
-  "description": "Choose which websites open in Edge with password-protected allow and block lists.",
+  "name": "BrowseLatch: Website Rules",
+  "version": "1.5.0",
+  "description": "Choose Allowlist or Blocklist mode and manage website access with parent-protected settings.",
   "minimum_chrome_version": "102",
   "permissions": ["declarativeNetRequest", "storage"],
   "host_permissions": ["http://*/*", "https://*/*"],

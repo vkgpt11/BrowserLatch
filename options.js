@@ -1,184 +1,281 @@
 const $ = selector => document.querySelector(selector);
-const authCard = $('#auth-card');
-const setupPanel = $('#setup-panel');
-const unlockPanel = $('#unlock-panel');
 const settings = $('#settings');
-const authStatus = $('#auth-status');
-let allowed = [];
-let blocked = [];
+const authCard = $('#auth-card');
+let mode = 'allow';
+let domains = [];
+let revision = '';
 let selected = '';
-let busy = false;
 let currentSite = '';
+let expiresAt = 0;
+let lockTimer;
+let undoDomains = null;
+let busy = false;
 
 const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${domain}`);
+
+function updateLockStatus() {
+  const remaining = Math.max(0, expiresAt - Date.now());
+  if (!settings.hidden && !remaining) { showLocked(true, 'Parent access expired. Enter the password again.'); return; }
+  $('#access-status').textContent = `Parent access · locks in ${Math.ceil(remaining / 60000)} min`;
+}
+
+function setExpiry(value) {
+  expiresAt = value || 0;
+  window.clearInterval(lockTimer);
+  if (expiresAt && !settings.hidden) {
+    updateLockStatus();
+    lockTimer = window.setInterval(updateLockStatus, 1000);
+  }
+}
 
 async function request(message) {
   const result = await chrome.runtime.sendMessage(message);
   if (!result?.ok) throw new Error(result?.error || 'Could not reach the extension.');
+  if (result.expiresAt) expiresAt = result.expiresAt;
   return result;
 }
 
 function showLocked(configured, message = '') {
+  window.clearInterval(lockTimer);
+  expiresAt = 0;
+  domains = [];
+  revision = '';
+  undoDomains = null;
+  currentSite = '';
+  selected = '';
+  $('#sites').replaceChildren();
+  $('#check-result').textContent = '';
+  $('#legacy-backup-list').textContent = '';
+  $('#current-site-domain').textContent = '';
+  $('#selected-domain').textContent = '';
+  $('#change-form').reset();
+  $('#undo').hidden = true;
   settings.hidden = true;
   authCard.hidden = false;
-  setupPanel.hidden = configured;
-  unlockPanel.hidden = !configured;
-  authStatus.textContent = message || (configured ? 'Settings are locked.' : 'Create a password before configuring websites.');
+  $('#access-status').hidden = true;
+  $('#setup-panel').hidden = configured;
+  $('#unlock-panel').hidden = !configured;
+  $('#auth-status').textContent = message || (configured ? 'Settings are locked.' : 'Create a password before configuring websites.');
   (configured ? $('#password') : $('#new-password')).focus();
 }
 
+function explain(host) {
+  const match = domains.filter(domain => matchesDomain(host, domain)).sort((a, b) => b.length - a.length)[0];
+  if (mode === 'allow') return match ? `Allowed by ${match}.` : 'Blocked because it is not on the allowlist.';
+  return match ? `Blocked by ${match}.` : 'Allowed because it is not on the blocklist.';
+}
+
+function updatePreview() {
+  const value = $('#new-domain').value.trim();
+  $('#add-preview').textContent = value ? `${mode === 'allow' ? 'Allow' : 'Block'} ${value} and its subdomains.` : '';
+}
+
 function render() {
-  const filter = $('#filter').value;
+  const legacy = mode === 'legacy';
+  $('#legacy-note').hidden = !legacy;
+  $('#rules-panel').hidden = legacy;
+  $('#check-panel').hidden = legacy;
+  $('#mode-select').value = legacy ? 'allow' : mode;
+  $('#apply-mode').disabled = !legacy && $('#mode-select').value === mode;
+  $('#mode-summary').textContent = legacy ? 'Your previous version used both lists. Select one mode to continue.' :
+    mode === 'allow' ? 'Only listed websites open. Every other website is blocked.' : 'Listed websites are blocked. Every other website can open.';
+  if (legacy) return;
+
+  $('#list-title').textContent = mode === 'allow' ? 'Allowed websites' : 'Blocked websites';
+  $('#list-description').textContent = mode === 'allow' ? 'Only these domains and their subdomains can open.' : 'These domains and their subdomains cannot open.';
+  $('#count').textContent = `${domains.length} listed`;
   const query = $('#search').value.trim().toLowerCase();
+  const entries = domains.filter(domain => domain.includes(query));
   const list = $('#sites');
+  list.size = Math.min(9, Math.max(3, entries.length));
   list.replaceChildren();
-  const entries = [...allowed.map(domain => ({domain, state: 'Allowed'})),
-    ...blocked.map(domain => ({domain, state: 'Blocked'}))]
-    .filter(entry => (filter === 'all' || entry.state.toLowerCase() === filter) && entry.domain.includes(query))
-    .sort((a, b) => a.domain.localeCompare(b.domain));
-  for (const entry of entries) {
+  for (const domain of entries) {
     const option = document.createElement('option');
-    option.value = entry.domain;
-    option.textContent = `${entry.state === 'Allowed' ? '✓' : '✕'}  ${entry.domain} — ${entry.state}`;
-    option.selected = entry.domain === selected;
+    option.value = domain;
+    option.textContent = `${mode === 'allow' ? '✓ Allowed' : '✕ Blocked'}  ${domain}`;
+    option.selected = domain === selected;
     list.append(option);
   }
   if (!entries.length) {
     const empty = document.createElement('option');
-    empty.textContent = 'No websites to show';
+    empty.textContent = domains.length ? 'No matches' : 'No websites listed';
     empty.disabled = true;
     list.append(empty);
   }
-  if (!entries.some(entry => entry.domain === selected)) selected = '';
+  if (!entries.includes(selected)) selected = '';
   list.value = selected;
-  $('#count').textContent = `${allowed.length} allowed · ${blocked.length} blocked`;
   $('#match-count').textContent = `${entries.length} matching ${entries.length === 1 ? 'website' : 'websites'}`;
+  $('#editor').hidden = !selected;
+  if (selected) {
+    $('#selected-domain').textContent = selected;
+    $('#selected-state').textContent = mode === 'allow' ? 'Allowed' : 'Blocked';
+    $('#selected-state').classList.toggle('blocked-state', mode === 'block');
+    $('#selected-effect').textContent = `Removing this entry will ${mode === 'allow' ? 'block' : 'allow'} it unless another listed parent domain still applies.`;
+  }
   $('#current-site-box').hidden = !currentSite;
   if (currentSite) {
     $('#current-site-domain').textContent = currentSite;
-    $('#current-site-state').textContent = blocked.some(domain => matchesDomain(currentSite, domain)) ? 'Blocked by a rule' :
-      allowed.some(domain => matchesDomain(currentSite, domain)) ? 'Allowed' : 'Blocked by default';
-    $('#current-site-action').textContent = allowed.includes(currentSite) || blocked.includes(currentSite) ? 'Edit saved entry' : 'Add this website';
+    $('#current-site-state').textContent = explain(currentSite);
+    $('#current-site-action').textContent = domains.includes(currentSite) ? 'View this entry' : 'Use this website';
   }
-  const editor = $('#editor');
-  editor.hidden = !selected;
-  if (selected) {
-    const isAllowed = allowed.includes(selected);
-    $('#selected-domain').textContent = selected;
-    $('#selected-state').textContent = isAllowed ? 'Allowed' : 'Blocked';
-    $('#selected-state').classList.toggle('blocked-state', !isAllowed);
-    $('#selected-allowed').checked = isAllowed;
-  }
+  updatePreview();
 }
 
-async function showSettings() {
-  const result = await request({type: 'read'});
-  allowed = result.allowed;
-  blocked = result.blocked;
+function applyPolicy(result) {
+  mode = result.mode;
+  domains = [...result.domains];
+  revision = result.revision;
+  undoDomains = null;
+  $('#undo').hidden = true;
   currentSite = result.currentSite || '';
   selected = '';
+  if (mode === 'legacy') $('#legacy-counts').textContent = `${result.legacyAllowed.length} previously allowed · ${result.legacyBlocked.length} previously blocked`;
+  $('#legacy-backup').hidden = !result.legacyAllowedBackup?.length;
+  $('#legacy-backup-list').textContent = (result.legacyAllowedBackup ?? []).join('\n');
   render();
   authCard.hidden = true;
   settings.hidden = false;
-  $('#status').textContent = 'Protection is active.';
+  $('#access-status').hidden = false;
+  setExpiry(result.expiresAt);
 }
 
-async function save(nextAllowed, nextBlocked, message) {
-  if (busy) return;
+async function showSettings() { applyPolicy(await request({type: 'read'})); }
+
+async function save(next, message, previous = domains) {
+  if (busy) return false;
   busy = true;
   for (const control of settings.querySelectorAll('button,input,select')) control.disabled = true;
   try {
-    const result = await request({type: 'save', allowed: nextAllowed.join('\n'), blocked: nextBlocked.join('\n')});
-    allowed = result.allowed;
-    blocked = result.blocked;
+    const result = await request({type: 'save', domains: next.join('\n'), revision});
+    domains = result.domains;
+    revision = result.revision;
+    undoDomains = [...previous];
+    $('#undo').hidden = false;
     render();
     $('#status').textContent = `${message} Reload open websites to apply changes.`;
+    setExpiry(result.expiresAt);
     return true;
   } catch (error) {
     if (/locked/i.test(error.message)) showLocked(true, error.message);
-    else $('#status').textContent = `Not saved: ${error.message}`;
-    render();
+    else {
+      $('#status').textContent = `Not saved: ${error.message}`;
+      if (/another tab/i.test(error.message)) await showSettings();
+      render();
+    }
     return false;
   } finally {
     busy = false;
     for (const control of settings.querySelectorAll('button,input,select')) control.disabled = false;
+    $('#apply-mode').disabled = mode !== 'legacy' && $('#mode-select').value === mode;
   }
 }
 
 request({type: 'status'}).then(result => result.unlocked ? showSettings() : showLocked(result.configured)).catch(error => showLocked(true, error.message));
 
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden || settings.hidden) return;
+  try { if (!(await request({type: 'status'})).unlocked) showLocked(true, 'Parent access expired. Enter the password again.'); }
+  catch { showLocked(true, 'Could not confirm parent access. Enter the password again.'); }
+});
+
+chrome.storage?.onChanged?.addListener((changes, areaName) => {
+  if (areaName === 'session' && changes.accessLockVersion?.newValue) { if (!settings.hidden) showLocked(true); return; }
+  if (areaName !== 'session' || !changes.pendingSite?.newValue || settings.hidden) return;
+  request({type: 'read'}).then(result => {
+    if (result.revision !== revision) { undoDomains = null; $('#undo').hidden = true; }
+    currentSite = result.currentSite || '';
+    domains = [...result.domains];
+    revision = result.revision;
+    render();
+    setExpiry(result.expiresAt);
+  }).catch(error => { if (/locked/i.test(error.message)) showLocked(true, error.message); });
+});
+
 $('#setup-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if ($('#new-password').value !== $('#confirm-password').value) { authStatus.textContent = 'Passwords do not match.'; return; }
+  if ($('#new-password').value !== $('#confirm-password').value) { $('#auth-status').textContent = 'Passwords do not match.'; return; }
   try { await request({type: 'setup', password: $('#new-password').value}); event.target.reset(); await showSettings(); }
-  catch (error) { authStatus.textContent = error.message; }
+  catch (error) { $('#auth-status').textContent = error.message; }
 });
 
 $('#unlock-form').addEventListener('submit', async event => {
   event.preventDefault();
   try { await request({type: 'unlock', password: $('#password').value}); event.target.reset(); await showSettings(); }
-  catch (error) { authStatus.textContent = error.message; }
+  catch (error) { $('#auth-status').textContent = error.message; }
 });
 
+$('#mode-select').addEventListener('change', () => { $('#apply-mode').disabled = mode !== 'legacy' && $('#mode-select').value === mode; });
+$('#mode-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const nextMode = $('#mode-select').value;
+  if (nextMode === mode) return;
+  const warning = nextMode === 'block' ? 'Switch to Blocklist? Every website not on the blocklist will be allowed.' : 'Switch to Allowlist? Every website not on the allowlist will be blocked.';
+  if (!window.confirm(`${warning}\n\nEach mode keeps its own saved list.`)) { $('#mode-select').value = mode === 'legacy' ? 'allow' : mode; return; }
+  try {
+    const result = await request({type: 'setMode', mode: nextMode, revision});
+    applyPolicy(result);
+    undoDomains = null;
+    $('#undo').hidden = true;
+    $('#status').textContent = `${nextMode === 'allow' ? 'Allowlist' : 'Blocklist'} is now active. Reload open websites to apply changes. ${result.migrationNotice || ''}`;
+  } catch (error) {
+    if (/locked/i.test(error.message)) showLocked(true, error.message);
+    else $('#mode-summary').textContent = `Mode not changed: ${error.message}`;
+  }
+});
+
+$('#new-domain').addEventListener('input', updatePreview);
 $('#add-form').addEventListener('submit', async event => {
   event.preventDefault();
   const input = $('#new-domain').value.trim();
-  let domain = input.toLowerCase();
-  try { domain = new URL(`https://${input}`).hostname.toLowerCase(); } catch {}
-  const isAllowed = $('#new-allowed').checked;
-  selected = '';
-  const saved = await save(
-    [...allowed.filter(item => item !== domain), ...(isAllowed ? [input] : [])],
-    [...blocked.filter(item => item !== domain), ...(!isAllowed ? [input] : [])],
-    `${input} ${isAllowed ? 'allowed' : 'blocked'}.`
-  );
+  if (domains.includes(input.toLowerCase())) { $('#status').textContent = `${input} is already listed.`; return; }
+  const saved = await save([...domains, input], `${input} added to the ${mode === 'allow' ? 'allowlist' : 'blocklist'}.`);
   if (saved) {
     $('#new-domain').value = '';
-    $('#filter').value = 'all';
     $('#search').value = '';
-    selected = domain;
+    try { selected = new URL(`https://${input}`).hostname.toLowerCase(); } catch { selected = ''; }
     render();
   }
 });
 
-$('#filter').addEventListener('change', render);
 $('#search').addEventListener('input', render);
+$('#sites').addEventListener('change', () => { selected = $('#sites').value; render(); });
 $('#current-site-action').addEventListener('click', () => {
-  if (allowed.includes(currentSite) || blocked.includes(currentSite)) {
-    $('#filter').value = 'all';
+  if (domains.includes(currentSite)) {
     $('#search').value = '';
     selected = currentSite;
     render();
     $('#sites').focus();
   } else {
     $('#new-domain').value = currentSite;
-    $('#new-allowed').checked = true;
+    updatePreview();
     $('#new-domain').focus();
   }
-});
-$('#sites').addEventListener('change', () => { selected = $('#sites').value; render(); });
-$('#selected-allowed').addEventListener('change', async () => {
-  const domain = selected;
-  const isAllowed = $('#selected-allowed').checked;
-  await save(
-    [...allowed.filter(item => item !== domain), ...(isAllowed ? [domain] : [])],
-    [...blocked.filter(item => item !== domain), ...(!isAllowed ? [domain] : [])],
-    `${domain} ${isAllowed ? 'allowed' : 'blocked'}.`
-  );
 });
 $('#remove').addEventListener('click', async () => {
   const domain = selected;
   selected = '';
-  const saved = await save(allowed.filter(item => item !== domain), blocked.filter(item => item !== domain), `${domain} removed.`);
-  if (!saved) { selected = domain; render(); }
+  if (!await save(domains.filter(item => item !== domain), `${domain} removed.`)) { selected = domain; render(); }
+});
+$('#undo').addEventListener('click', async () => {
+  if (!undoDomains) return;
+  const previous = [...undoDomains];
+  if (await save(previous, 'Last change undone.')) { undoDomains = null; $('#undo').hidden = true; }
 });
 $('#lock').addEventListener('click', async () => {
   try { await request({type: 'lock'}); showLocked(true); }
-  catch (error) { $('#status').textContent = error.message; }
+  catch (error) { $('#mode-summary').textContent = error.message; }
 });
-
+$('#check-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const input = $('#check-domain').value.trim();
+  try {
+    const url = new URL(/^[a-z]+:\/\//i.test(input) ? input : `https://${input}`);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) throw new Error();
+    $('#check-result').textContent = `${url.hostname}: ${explain(url.hostname.toLowerCase())}`;
+  } catch { $('#check-result').textContent = 'Enter a valid website address or domain.'; }
+});
 $('#change-form').addEventListener('submit', async event => {
   event.preventDefault();
-  try { await request({type: 'changePassword', currentPassword: $('#current-password').value, newPassword: $('#replacement-password').value}); event.target.reset(); $('#change-status').textContent = 'Password changed.'; }
-  catch (error) { $('#change-status').textContent = error.message; }
+  try { const result = await request({type: 'changePassword', currentPassword: $('#current-password').value, newPassword: $('#replacement-password').value}); event.target.reset(); setExpiry(result.expiresAt); $('#change-status').textContent = 'Password changed.'; }
+  catch (error) { if (/locked/i.test(error.message)) showLocked(true, error.message); else $('#change-status').textContent = error.message; }
 });

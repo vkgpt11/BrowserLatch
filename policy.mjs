@@ -10,20 +10,28 @@ export function parseDomains(text) {
     if (host.endsWith('.') || host.length > 253 || !host.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
       throw new Error(`Invalid domain: ${entry}`);
     }
+    // A bare suffix would match every site beneath it in DNR rules.
+    if (PUBLIC_SUFFIXES.has(host) || !host.includes('.')) throw new Error(`Enter a specific website, not a domain suffix: ${entry}`);
     domains.add(host);
   }
   if (domains.size > 500) throw new Error('The maximum is 500 domains.');
   return [...domains].sort();
 }
 
-export function buildRules(domains, blocked = []) {
+// Common public suffixes are listed explicitly so validation works offline.
+// This is a guardrail, not a complete Public Suffix List implementation.
+const PUBLIC_SUFFIXES = new Set(['com', 'org', 'net', 'edu', 'gov', 'mil', 'int', 'io', 'app', 'dev', 'uk', 'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'au', 'com.au', 'net.au', 'org.au', 'in', 'co.in', 'com.br', 'co.jp', 'github.io']);
+
+export function buildRules(domains, mode = 'allow') {
   // DNR otherwise excludes main_frame by default. An empty excludedResourceTypes
   // list is ambiguous across browser versions, so enumerate every supported type.
   const resourceTypes = ['main_frame', 'sub_frame', 'stylesheet', 'script', 'image',
     'font', 'object', 'xmlhttprequest', 'ping', 'csp_report', 'media',
     'websocket', 'webtransport', 'webbundle', 'other'];
   const rules = [];
-  if (domains.length) rules.push(
+  if (!['allow', 'block'].includes(mode)) throw new Error('Choose Allowlist or Blocklist mode.');
+  if (mode === 'block') rules.push({id: 104, priority: 3, action: {type: 'allow'}, condition: {resourceTypes}});
+  if (mode === 'allow' && domains.length) rules.push(
     {id: 100, priority: 3, action: {type: 'allow'}, condition: {requestDomains: domains, resourceTypes}},
     // Sites such as YouTube need scripts/video from other hosts. Permit those
     // resources when the initiating page is listed, but keep off-list frames
@@ -32,11 +40,11 @@ export function buildRules(domains, blocked = []) {
       initiatorDomains: domains, resourceTypes: resourceTypes.filter(type => type !== 'main_frame' && type !== 'sub_frame')
     }}
   );
-  if (blocked.length) rules.push(
+  if (mode === 'block' && domains.length) rules.push(
     {id: 102, priority: 4, action: {type: 'redirect', redirect: {extensionPath: '/blocked.html'}},
-      condition: {requestDomains: blocked, resourceTypes: ['main_frame']}},
+      condition: {requestDomains: domains, resourceTypes: ['main_frame']}},
     {id: 103, priority: 4, action: {type: 'block'},
-      condition: {requestDomains: blocked, resourceTypes: resourceTypes.filter(type => type !== 'main_frame')}}
+      condition: {requestDomains: domains, resourceTypes: resourceTypes.filter(type => type !== 'main_frame')}}
   );
   return rules;
 }
