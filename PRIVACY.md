@@ -1,8 +1,8 @@
-# Privacy policy: Only Listed Websites
+# Privacy policy: BrowseLatch
 
 Effective date: September 21, 2026.
 
-Only Listed Websites is a Microsoft Edge extension that restricts website navigation to domains you allow.
+BrowseLatch is a Microsoft Edge extension that restricts website navigation to domains you allow. It was previously called Only Listed Websites.
 
 ## Information used locally
 The domains you allow or explicitly block are stored in Microsoft Edge's local extension rules. A salted password verifier and failed-attempt counters are stored locally in the browser profile. The password itself is never stored. When you click the extension toolbar button, the extension briefly keeps that tab's domain in in-memory session storage to offer an Add this website shortcut after you unlock settings. The hint is cleared after it is shown and is not a browsing-history log. The extension does not read webpage contents.

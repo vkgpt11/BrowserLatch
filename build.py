@@ -10,7 +10,7 @@ files = ['manifest.json', 'rules.json', 'background.js', 'policy.mjs', 'auth.mjs
 files += list(manifest['icons'].values())
 destination = root / 'dist'
 destination.mkdir(exist_ok=True)
-archive = destination / f"only-listed-websites-{manifest['version']}.zip"
+archive = destination / f"browselatch-{manifest['version']}.zip"
 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
     for name in sorted(set(files)):
         bundle.write(root / name, name)

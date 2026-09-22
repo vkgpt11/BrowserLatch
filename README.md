@@ -1,10 +1,10 @@
-# Only Listed Websites — Microsoft Edge extension
+# BrowseLatch — Microsoft Edge website allowlist
 
 [Privacy policy](PRIVACY.md) · Support: vikasgupta.net@live.com
 
 For parental tamper resistance, see [administrator setup](ADMIN_SETUP.md).
 
-The extension is published in Microsoft Edge Add-ons. Automated tests do not replace live Edge installation and network checks below.
+An earlier version is published in Microsoft Edge Add-ons under the name Only Listed Websites. BrowseLatch is the next update; automated tests do not replace live Edge installation and network checks below.
 
 ## Install
 
@@ -45,6 +45,6 @@ The password makes casual changes harder, but this is not tamper-proof parental 
 
 Run policy, worker, and settings-page unit tests with `npm ci` followed by `npm test`.
 
-Build the store upload package with `python build.py`. The ZIP is written to `dist/` with only runtime files. GitHub Actions runs the tests and uploads the ZIP as a workflow artifact.
+Build the store upload package with `python build.py`. The ZIP is written to `dist/` with only runtime files. Generate icons from the editable SVG with `npm run icons`. GitHub Actions runs the tests and uploads the ZIP as a workflow artifact.
 
 References: https://learn.microsoft.com/en-us/microsoft-edge/extensions/getting-started/extension-sideloading and https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest

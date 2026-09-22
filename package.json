@@ -1,12 +1,14 @@
 {
-  "name": "only-listed-websites",
-  "version": "1.3.0",
+  "name": "browselatch",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/policy.test.mjs tests/options.test.mjs"
+    "test": "node --test tests/policy.test.mjs tests/options.test.mjs",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "jsdom": "^26.1.0"
   }
 }
