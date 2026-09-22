@@ -65,9 +65,24 @@ try {
   await new Promise(resolve => setTimeout(resolve, 500));
   assert.equal(await evaluate("document.querySelector('#list-title').textContent"), 'Blocked websites');
   assert.equal(await evaluate("document.querySelector('#settings').hidden"), false);
+  state = await message({type: 'setMode', mode: 'allow', revision: state.revision});
+  state = await message({type: 'save', domains: 'example.com', exceptions: 'kids.example.com', revision: state.revision});
+  assert.equal(state.ok, true, JSON.stringify(state));
+  assert.deepEqual(state.exceptions, ['kids.example.com']);
+  assert.equal((await outcome('https://example.com/')).matchedRules[0]?.ruleId, 100);
+  assert.equal((await outcome('https://www.example.com/')).matchedRules[0]?.ruleId, 100);
+  assert.equal((await outcome('https://kids.example.com/')).matchedRules[0]?.ruleId, 105);
+  assert.equal((await outcome('https://games.kids.example.com/')).matchedRules[0]?.ruleId, 105);
+  assert.equal((await outcome('https://kids.example.com/logo.png', 'image', 'https://www.example.com')).matchedRules[0]?.ruleId, 106);
+  assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 101);
+  await call('Page.reload');
+  await new Promise(resolve => setTimeout(resolve, 500));
+  assert.equal(await evaluate("document.querySelector('#exceptions-panel').hidden"), false);
+  assert.equal(await evaluate("document.querySelector('#exceptions').options[0].value"), 'kids.example.com');
   if (process.env.EDGE_SCREENSHOT) {
+    await evaluate("document.querySelector('#exceptions-panel').scrollIntoView()");
     const shot = await call('Page.captureScreenshot', {format: 'png', captureBeyondViewport: true});
     await writeFile(process.env.EDGE_SCREENSHOT, Buffer.from(shot.data, 'base64'));
   }
-  console.log('Edge DNR smoke checks passed: both list modes and denied hostname redirect.');
+  console.log('Edge DNR smoke checks passed: both list modes, denied hostname redirect, and blocked child exception.');
 } finally {socket.close();}

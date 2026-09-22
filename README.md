@@ -17,16 +17,16 @@ If using the ZIP, extract it first and select the extracted folder containing ma
 
 ## Behavior
 
-- **Allowlist** mode permits listed domains and blocks other websites. **Blocklist** mode blocks listed domains and permits other websites. Only one mode is active at a time. Each mode remembers its own list when you switch.
+- **Allowlist** mode permits listed domains and blocks other websites. A blocked subdomain exception can keep part of an allowed website closed. **Blocklist** mode blocks listed domains and permits other websites. Only one mode is active at a time. Each mode remembers its own list when you switch.
 - A listed domain includes its subdomains, on all ports and paths. For example, `example.com` covers `www.example.com` but never `example.com.attacker.test` or `notexample.com`.
 - Enter domains only, not URLs, paths, ports or wildcard patterns. Internationalized domains are converted to ASCII (punycode).
 - Public suffixes such as `com`, `co.nz`, and `github.io` are rejected using a complete Public Suffix List bundled with the extension. The list works offline; update the bundled snapshot with `node scripts/update-psl.mjs` before future releases.
-- The settings list shows the active mode's domains. Search, select, or remove an entry; changes save immediately and the last change can be undone. **Check a website** explains whether a domain is allowed or blocked under the current list.
+- The settings list shows the active mode's domains. Search, select, or remove an entry; changes save immediately and the last change can be undone. In Allowlist mode, a separate blocked exceptions list lets you add or remove child domains of allowed websites. **Check a website** explains whether a domain is allowed or blocked under the current list and exceptions.
 - Search saved domains as you type. Clicking the toolbar button on a website opens settings with an **Add this website** shortcut; you still need the parent password to change the rule. The clicked domain is kept in memory only until settings are unlocked and shown.
 - In Allowlist mode, unlisted HTTP/HTTPS page navigations redirect to a local blocked page, and unlisted embedded frames remain blocked. In Blocklist mode, listed websites redirect to that page and other websites can open. The blocked page shows the denied hostname and offers a shortcut to check it in parent settings. It never includes the page's path or query.
 - In Allowlist mode, a listed page can load supporting scripts, images, video streams and API requests from other domains. This makes sites such as YouTube work without separately listing each supporting domain. It does not allow navigating to those domains as websites.
 - An empty Allowlist blocks all websites; an empty Blocklist allows all websites. Rules work without a running background worker, persist across restarts, and update atomically. Failed saves retain the previous rules.
-- If an older version contains both allowed and blocked entries, settings ask you to choose one active mode. The old lists are retained locally. An allowed parent with a previously blocked child is withheld from the new Allowlist so the child does not become accessible by accident.
+- If an older version contains both allowed and blocked entries, settings ask you to choose one active mode. The old lists are retained locally. When Allowlist is chosen, an allowed parent stays open and its previously blocked child becomes a blocked exception. An allowed entry that is itself blocked, or falls beneath a blocked parent, stays closed.
 - The password is salted and processed locally with PBKDF2-SHA-256. Settings hide after five minutes without parent activity, and repeated incorrect attempts trigger increasing delays.
 - There is no password recovery. Uninstalling and reinstalling resets the password and allowlist.
 - No analytics, external services, sync, or collection of browsing history. Rules are stored locally by Edge.
@@ -44,6 +44,7 @@ The password makes casual changes harder, but this is not tamper-proof parental 
 5. Switch back to Allowlist and verify its previous list is restored. Restart Edge and repeat.
 6. Enter `https://example.com/path`, `*.com`, `com`, or `co.nz`: adding must fail and retain the old rules.
 7. Check allowed and blocked outcomes with **Check a website**. On a website, click the extension toolbar button, unlock settings, and verify the **Current website** shortcut fills or selects its domain. On the blocked page, confirm the hostname appears and its parent button opens settings with that hostname ready to add or check.
+8. In Allowlist mode, add `example.com` and then add `kids.example.com` as a blocked exception. The parent and `www.example.com` should open; `kids.example.com` and its children should be blocked. Switch modes and back to confirm the exception remains.
 
 Run policy, worker, and settings-page unit tests with `npm ci` followed by `npm test`.
 

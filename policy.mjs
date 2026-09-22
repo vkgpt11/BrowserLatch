@@ -20,7 +20,7 @@ export function parseDomains(text) {
   return [...domains].sort();
 }
 
-export function buildRules(domains, mode = 'allow', blockedPageUrl) {
+export function buildRules(domains, mode = 'allow', blockedPageUrl, exceptions = []) {
   // DNR otherwise excludes main_frame by default. An empty excludedResourceTypes
   // list is ambiguous across browser versions, so enumerate every supported type.
   const resourceTypes = ['main_frame', 'sub_frame', 'stylesheet', 'script', 'image',
@@ -32,16 +32,22 @@ export function buildRules(domains, mode = 'allow', blockedPageUrl) {
   const rules = [{id: 105, priority: 3, action: {type: 'redirect', redirect},
     condition: {regexFilter: captureHost, resourceTypes: ['main_frame']}}];
   if (!['allow', 'block'].includes(mode)) throw new Error('Choose Allowlist or Blocklist mode.');
+  if (mode === 'block' && exceptions.length) throw new Error('Blocked exceptions only apply in Allowlist mode.');
+  if (exceptions.some(child => !domains.some(parent => child !== parent && child.endsWith(`.${parent}`)))) {
+    throw new Error('Each blocked exception must be below an allowed parent domain.');
+  }
   if (mode === 'block') rules.push({id: 104, priority: 4, action: {type: 'allow'}, condition: {resourceTypes}});
   if (mode === 'allow' && domains.length) rules.push(
-    {id: 100, priority: 4, action: {type: 'allow'}, condition: {requestDomains: domains, resourceTypes}},
+    {id: 100, priority: 4, action: {type: 'allow'}, condition: {requestDomains: domains, ...(exceptions.length ? {excludedRequestDomains: exceptions} : {}), resourceTypes}},
     // Sites such as YouTube need scripts/video from other hosts. Permit those
     // resources when the initiating page is listed, but keep off-list frames
     // and top-level navigations subject to the default block rules.
     {id: 101, priority: 4, action: {type: 'allow'}, condition: {
-      initiatorDomains: domains, resourceTypes: resourceTypes.filter(type => type !== 'main_frame' && type !== 'sub_frame')
+      initiatorDomains: domains, ...(exceptions.length ? {excludedInitiatorDomains: exceptions} : {}), resourceTypes: resourceTypes.filter(type => type !== 'main_frame' && type !== 'sub_frame')
     }}
   );
+  if (mode === 'allow' && exceptions.length) rules.push({id: 106, priority: 5, action: {type: 'block'},
+    condition: {requestDomains: exceptions, resourceTypes: resourceTypes.filter(type => type !== 'main_frame')}});
   if (mode === 'block' && domains.length) rules.push(
     {id: 102, priority: 5, action: {type: 'redirect', redirect},
       condition: {requestDomains: domains, regexFilter: captureHost, resourceTypes: ['main_frame']}},

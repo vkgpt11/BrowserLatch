@@ -10,31 +10,34 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 const openWindows = new Set();
 test.afterEach(() => { for (const window of openWindows) window.close(); openWindows.clear(); });
 
-async function createPage({mode = 'allow', domains = [], currentSite = '', legacyAllowed = [], legacyBlocked = [], expiryOffsetMs = 300000} = {}) {
+async function createPage({mode = 'allow', domains = [], exceptions = [], currentSite = '', legacyAllowed = [], legacyBlocked = [], expiryOffsetMs = 300000} = {}) {
   const dom = new JSDOM(html, {url: 'https://extension.test/options.html', runScripts: 'outside-only'});
   openWindows.add(dom.window);
-  const state = {mode, domains, currentSite, legacyAllowed, legacyBlocked, saved: {allow: [], block: []}, revision: 1, unlocked: true, failSave: false, expiryOffsetMs};
+  const state = {mode, domains, exceptions, currentSite, legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, expiryOffsetMs};
   let onStorageChanged;
   dom.window.confirm = () => true;
   dom.window.chrome = {storage: {onChanged: {addListener(fn) {onStorageChanged = fn;}}}, runtime: {sendMessage: async message => {
     if (message.type === 'status') return {ok: true, configured: true, unlocked: state.unlocked, expiresAt: Date.now() + state.expiryOffsetMs};
-    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, revision: String(state.revision), currentSite: state.currentSite, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, revision: String(state.revision), currentSite: state.currentSite, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'lock') {state.unlocked = false; return {ok: true};}
     if (!state.unlocked) return {ok: false, error: 'Settings are locked.'};
     if (message.revision !== String(state.revision)) return {ok: false, error: 'The list changed in another tab. Reload settings before saving.'};
     if (message.type === 'save') {
       if (state.failSave) return {ok: false, error: 'Rejected update'};
-      try { state.domains = parseDomains(message.domains); }
+      try { state.domains = parseDomains(message.domains); state.exceptions = parseDomains(message.exceptions ?? '');
+        if (state.exceptions.some(child => !state.domains.some(parent => child !== parent && child.endsWith(`.${parent}`)))) throw new Error('Each blocked exception must be below an allowed parent domain.'); }
       catch (error) { return {ok: false, error: error.message}; }
       state.revision++;
     } else if (message.type === 'setMode') {
-      if (state.mode === 'legacy') {state.saved.allow = [...state.legacyAllowed]; state.saved.block = [...state.legacyBlocked];}
-      else state.saved[state.mode] = [...state.domains];
+      if (state.mode === 'legacy') {state.saved.allow = [...state.legacyAllowed]; state.saved.block = [...state.legacyBlocked];
+        state.saved.allowExceptions = state.legacyBlocked.filter(child => state.saved.allow.some(parent => child !== parent && child.endsWith(`.${parent}`)));}
+      else {state.saved[state.mode] = [...state.domains]; if (state.mode === 'allow') state.saved.allowExceptions = [...state.exceptions];}
       state.mode = message.mode;
       state.domains = [...state.saved[state.mode]];
+      state.exceptions = state.mode === 'allow' ? [...state.saved.allowExceptions] : [];
       state.revision++;
     } else return {ok: false, error: `Unexpected message: ${message.type}`};
-    return {ok: true, mode: state.mode, domains: state.domains, revision: String(state.revision), currentSite: '', expiresAt: Date.now() + state.expiryOffsetMs};
+    return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, revision: String(state.revision), currentSite: '', expiresAt: Date.now() + state.expiryOffsetMs};
   }}};
   dom.window.eval(script);
   await settle();
@@ -113,6 +116,45 @@ test('legacy mixed rules require a one-time choice without losing the other list
   await settle();
   assert.equal($('#legacy-note').hidden, true);
   assert.deepEqual(state.domains, ['kids.example.com']);
+  page.dom.window.close();
+});
+
+test('parent can inspect, add, remove, and undo blocked child exceptions', async () => {
+  const page = await createPage({domains: ['example.com'], exceptions: ['kids.example.com'], currentSite: 'games.kids.example.com'});
+  const {$, fire, state} = page;
+  assert.equal($('#exceptions-panel').hidden, false);
+  assert.match($('#current-site-state').textContent, /Blocked by exception kids.example.com/);
+  assert.equal($('#current-site-action').textContent, 'View blocked exception');
+  fire('#current-site-action', 'click');
+  assert.equal($('#exceptions').value, 'kids.example.com');
+  $('#check-domain').value = 'www.example.com';
+  fire('#check-form', 'submit');
+  assert.match($('#check-result').textContent, /Allowed by example.com/);
+  $('#check-domain').value = 'games.kids.example.com';
+  fire('#check-form', 'submit');
+  assert.match($('#check-result').textContent, /Blocked by exception/);
+  $('#exception-domain').value = 'video.example.com';
+  fire('#exception-form', 'submit');
+  await settle();
+  assert.deepEqual(state.exceptions, ['kids.example.com', 'video.example.com']);
+  $('#exceptions').value = 'video.example.com';
+  fire('#exceptions', 'change');
+  fire('#remove-exception', 'click');
+  await settle();
+  assert.deepEqual(state.exceptions, ['kids.example.com']);
+  fire('#undo', 'click');
+  await settle();
+  assert.deepEqual(state.exceptions, ['kids.example.com', 'video.example.com']);
+  $('#sites').value = 'example.com';
+  fire('#sites', 'change');
+  fire('#remove', 'click');
+  await settle();
+  assert.deepEqual(state.domains, []);
+  assert.deepEqual(state.exceptions, []);
+  fire('#undo', 'click');
+  await settle();
+  assert.deepEqual(state.domains, ['example.com']);
+  assert.deepEqual(state.exceptions, ['kids.example.com', 'video.example.com']);
   page.dom.window.close();
 });
 

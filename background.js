@@ -31,7 +31,7 @@ chrome.runtime.onInstalled.addListener(({reason}) => {
       if (policy.mode === 'legacy') {
         next = [...buildRules(policy.legacyAllowed, 'allow', blockedPage),
           ...buildRules(policy.legacyBlocked, 'block', blockedPage).filter(rule => rule.id === 102 || rule.id === 103)];
-      } else next = buildRules(policy.domains, policy.mode, blockedPage);
+      } else next = buildRules(policy.domains, policy.mode, blockedPage, policy.exceptions);
       await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: rules.map(rule => rule.id), addRules: next
       });
@@ -53,9 +53,10 @@ function validBlockedHost(value) {
 // Serialize saves; a failed atomic rule update leaves the previous list intact.
 function policyFromRules(rules) {
   const allowed = rules.find(rule => rule.id === 100)?.condition.requestDomains ?? [];
+  const exceptions = rules.find(rule => rule.id === 100)?.condition.excludedRequestDomains ?? [];
   const blocked = rules.find(rule => rule.id === 102)?.condition.requestDomains ?? [];
   const mode = rules.some(rule => rule.id === 104) ? 'block' : blocked.length ? 'legacy' : 'allow';
-  return {mode, domains: mode === 'block' ? blocked : allowed, legacyAllowed: allowed, legacyBlocked: blocked};
+  return {mode, domains: mode === 'block' ? blocked : allowed, exceptions: mode === 'allow' ? exceptions : [], legacyAllowed: allowed, legacyBlocked: blocked};
 }
 
 function revisionOf(rules) { return JSON.stringify([...rules].sort((a, b) => a.id - b.id)); }
@@ -119,20 +120,25 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (message.type === 'save') {
         if (policy.mode === 'legacy') throw new Error('Choose a list mode before editing websites.');
         const domains = parseDomains(message.domains);
-        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(domains, policy.mode, chrome.runtime.getURL('blocked.html'))});
+        const requested = message.exceptions === undefined ? policy.exceptions : parseDomains(message.exceptions);
+        const exceptions = requested.filter(child => domains.some(parent => child !== parent && child.endsWith(`.${parent}`)));
+        if (message.exceptions !== undefined && exceptions.length !== requested.length) throw new Error('Each blocked exception must be below an allowed parent domain.');
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(domains, policy.mode, chrome.runtime.getURL('blocked.html'), exceptions)});
       } else {
         if (!['allow', 'block'].includes(message.mode)) throw new Error('Choose Allowlist or Blocklist mode.');
         if (message.mode === policy.mode) throw new Error('This mode is already active.');
         const saved = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
         let lists;
         if (policy.mode === 'legacy') {
-          const conflicts = policy.legacyAllowed.filter(allowed => policy.legacyBlocked.some(blocked => blocked === allowed || blocked.endsWith(`.${allowed}`)));
-          lists = {allow: policy.legacyAllowed.filter(domain => !conflicts.includes(domain)), block: policy.legacyBlocked, legacyAllowedBackup: policy.legacyAllowed, legacyConflicts: conflicts};
-        } else lists = {...saved, [policy.mode]: policy.domains};
-        if (message.mode === 'allow' && lists.legacyConflicts?.length) migrationNotice = `${lists.legacyConflicts.join(', ')} were left off the allowlist because they contain previously blocked subdomains. Review and add only domains you want fully allowed.`;
+          const allow = policy.legacyAllowed.filter(domain => !policy.legacyBlocked.some(blocked => domain === blocked || domain.endsWith(`.${blocked}`)));
+          const allowExceptions = policy.legacyBlocked.filter(child => allow.some(parent => child !== parent && child.endsWith(`.${parent}`)));
+          lists = {allow, block: policy.legacyBlocked, allowExceptions, legacyAllowedBackup: policy.legacyAllowed};
+          if (message.mode === 'allow' && allowExceptions.length) migrationNotice = `${allowExceptions.join(', ')} remain blocked as exceptions under their allowed parent websites. Review them below.`;
+        } else lists = {...saved, [policy.mode]: policy.domains, ...(policy.mode === 'allow' ? {allowExceptions: policy.exceptions} : {})};
         const next = parseDomains((lists[message.mode] ?? []).join('\n'));
+        const exceptions = message.mode === 'allow' ? parseDomains((lists.allowExceptions ?? []).join('\n')).filter(child => next.some(parent => child !== parent && child.endsWith(`.${parent}`))) : [];
         await chrome.storage.local.set({[SAVED_LISTS_KEY]: lists});
-        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(next, message.mode, chrome.runtime.getURL('blocked.html'))});
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(next, message.mode, chrome.runtime.getURL('blocked.html'), exceptions)});
       }
       rules = await chrome.declarativeNetRequest.getDynamicRules();
       policy = policyFromRules(rules);

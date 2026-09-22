@@ -66,6 +66,17 @@ test('blocklist mode exempts unlisted requests and blocks listed destinations', 
   assert.throws(() => buildRules([], 'invalid', BLOCKED_PAGE));
 });
 
+test('allowlist can preserve blocked children without denying their allowed parent', () => {
+  const rules = buildRules(['example.com'], 'allow', BLOCKED_PAGE, ['kids.example.com']);
+  assert.deepEqual(rules.map(rule => rule.id), [105, 100, 101, 106]);
+  assert.deepEqual(rules[1].condition.excludedRequestDomains, ['kids.example.com']);
+  assert.deepEqual(rules[2].condition.excludedInitiatorDomains, ['kids.example.com']);
+  assert.deepEqual(rules[3].condition.requestDomains, ['kids.example.com']);
+  assert.ok(rules[3].priority > rules[2].priority);
+  assert.throws(() => buildRules(['example.com'], 'allow', BLOCKED_PAGE, ['other.test']));
+  assert.throws(() => buildRules(['example.com'], 'allow', BLOCKED_PAGE, ['example.com']));
+});
+
 async function worker(initialRules = []) {
   let listener, installedListener, actionListener, persisted = structuredClone(initialRules), fail = false;
   const local = {};
@@ -135,12 +146,20 @@ test('legacy mixed rules require a choice and keep both previous lists available
   assert.equal(state.mode, 'legacy');
   assert.equal((await app.send({type: 'save', domains: 'other.test', revision: state.revision})).ok, false);
   state = await app.send({type: 'setMode', mode: 'allow', revision: state.revision});
-  assert.deepEqual([...state.domains], []);
-  assert.match(state.migrationNotice, /example.com/);
+  assert.deepEqual([...state.domains], ['example.com']);
+  assert.deepEqual([...state.exceptions], ['kids.example.com']);
+  assert.match(state.migrationNotice, /kids.example.com/);
   state = await app.send({type: 'setMode', mode: 'block', revision: state.revision});
   assert.deepEqual([...state.domains], ['kids.example.com']);
   state = await app.send({type: 'setMode', mode: 'allow', revision: state.revision});
-  assert.deepEqual([...state.domains], []);
+  assert.deepEqual([...state.domains], ['example.com']);
+  assert.deepEqual([...state.exceptions], ['kids.example.com']);
+  assert.deepEqual(app.getRules().map(rule => rule.id), [105, 100, 101, 106]);
+  assert.equal((await app.send({type: 'save', domains: 'example.com', exceptions: 'other.test', revision: state.revision})).ok, false);
+  state = await app.send({type: 'save', domains: 'example.com', exceptions: '', revision: state.revision});
+  assert.deepEqual([...state.exceptions], []);
+  state = await app.send({type: 'save', domains: 'example.com', exceptions: 'kids.example.com', revision: state.revision});
+  assert.deepEqual([...state.exceptions], ['kids.example.com']);
   assert.deepEqual(app.local.savedModeLists.legacyAllowedBackup, ['example.com']);
 });
 
@@ -182,4 +201,8 @@ test('installation adds hostname redirects and update keeps mixed legacy lists',
   assert.equal(state.mode, 'legacy');
   assert.deepEqual([...state.legacyAllowed], ['example.com']);
   assert.deepEqual([...state.legacyBlocked], ['kids.example.com']);
+
+  const existing = await worker(buildRules(['example.com'], 'allow', BLOCKED_PAGE, ['kids.example.com']));
+  await existing.installedListener({reason: 'update'});
+  assert.deepEqual(existing.getRules().find(rule => rule.id === 100).condition.excludedRequestDomains, ['kids.example.com']);
 });

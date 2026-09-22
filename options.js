@@ -3,12 +3,15 @@ const settings = $('#settings');
 const authCard = $('#auth-card');
 let mode = 'allow';
 let domains = [];
+let exceptions = [];
 let revision = '';
 let selected = '';
+let selectedException = '';
 let currentSite = '';
 let expiresAt = 0;
 let lockTimer;
 let undoDomains = null;
+let undoExceptions = null;
 let busy = false;
 
 const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${domain}`);
@@ -39,11 +42,15 @@ function showLocked(configured, message = '') {
   window.clearInterval(lockTimer);
   expiresAt = 0;
   domains = [];
+  exceptions = [];
   revision = '';
   undoDomains = null;
+  undoExceptions = null;
   currentSite = '';
   selected = '';
+  selectedException = '';
   $('#sites').replaceChildren();
+  $('#exceptions').replaceChildren();
   $('#check-result').textContent = '';
   $('#legacy-backup-list').textContent = '';
   $('#current-site-domain').textContent = '';
@@ -61,7 +68,10 @@ function showLocked(configured, message = '') {
 
 function explain(host) {
   const match = domains.filter(domain => matchesDomain(host, domain)).sort((a, b) => b.length - a.length)[0];
-  if (mode === 'allow') return match ? `Allowed by ${match}.` : 'Blocked because it is not on the allowlist.';
+  if (mode === 'allow') {
+    const exception = exceptions.filter(domain => matchesDomain(host, domain)).sort((a, b) => b.length - a.length)[0];
+    return exception ? `Blocked by exception ${exception}.` : match ? `Allowed by ${match}.` : 'Blocked because it is not on the allowlist.';
+  }
   return match ? `Blocked by ${match}.` : 'Allowed because it is not on the blocklist.';
 }
 
@@ -74,16 +84,36 @@ function render() {
   const legacy = mode === 'legacy';
   $('#legacy-note').hidden = !legacy;
   $('#rules-panel').hidden = legacy;
+  $('#exceptions-panel').hidden = legacy || mode !== 'allow';
   $('#check-panel').hidden = legacy;
   $('#mode-select').value = legacy ? 'allow' : mode;
   $('#apply-mode').disabled = !legacy && $('#mode-select').value === mode;
   $('#mode-summary').textContent = legacy ? 'Your previous version used both lists. Select one mode to continue.' :
-    mode === 'allow' ? 'Only listed websites open. Every other website is blocked.' : 'Listed websites are blocked. Every other website can open.';
+    mode === 'allow' ? `Only listed websites open. Every other website is blocked.${exceptions.length ? ` ${exceptions.length} blocked subdomain ${exceptions.length === 1 ? 'exception' : 'exceptions'} active.` : ''}` : 'Listed websites are blocked. Every other website can open.';
   if (legacy) return;
 
   $('#list-title').textContent = mode === 'allow' ? 'Allowed websites' : 'Blocked websites';
-  $('#list-description').textContent = mode === 'allow' ? 'Only these domains and their subdomains can open.' : 'These domains and their subdomains cannot open.';
+  $('#list-description').textContent = mode === 'allow' ? 'These domains and their subdomains can open, except any blocked subdomains below.' : 'These domains and their subdomains cannot open.';
   $('#count').textContent = `${domains.length} listed`;
+  const exceptionList = $('#exceptions');
+  exceptionList.replaceChildren();
+  exceptionList.size = Math.min(9, Math.max(3, exceptions.length));
+  for (const domain of exceptions) {
+    const option = document.createElement('option');
+    option.value = domain;
+    option.textContent = `✕ Blocked  ${domain}`;
+    option.selected = domain === selectedException;
+    exceptionList.append(option);
+  }
+  if (!exceptions.length) {
+    const empty = document.createElement('option');
+    empty.textContent = 'No blocked exceptions';
+    empty.disabled = true;
+    exceptionList.append(empty);
+  }
+  if (!exceptions.includes(selectedException)) selectedException = '';
+  exceptionList.value = selectedException;
+  $('#remove-exception').disabled = !selectedException;
   const query = $('#search').value.trim().toLowerCase();
   const entries = domains.filter(domain => domain.includes(query));
   const list = $('#sites');
@@ -116,7 +146,7 @@ function render() {
   if (currentSite) {
     $('#current-site-domain').textContent = currentSite;
     $('#current-site-state').textContent = explain(currentSite);
-    $('#current-site-action').textContent = domains.includes(currentSite) ? 'View this entry' : 'Use this website';
+    $('#current-site-action').textContent = mode === 'allow' && exceptions.some(domain => matchesDomain(currentSite, domain)) ? 'View blocked exception' : domains.includes(currentSite) ? 'View this entry' : 'Use this website';
   }
   updatePreview();
 }
@@ -124,11 +154,14 @@ function render() {
 function applyPolicy(result) {
   mode = result.mode;
   domains = [...result.domains];
+  exceptions = [...(result.exceptions ?? [])];
   revision = result.revision;
   undoDomains = null;
+  undoExceptions = null;
   $('#undo').hidden = true;
   currentSite = result.currentSite || '';
   selected = '';
+  selectedException = '';
   if (mode === 'legacy') $('#legacy-counts').textContent = `${result.legacyAllowed.length} previously allowed · ${result.legacyBlocked.length} previously blocked`;
   $('#legacy-backup').hidden = !result.legacyAllowedBackup?.length;
   $('#legacy-backup-list').textContent = (result.legacyAllowedBackup ?? []).join('\n');
@@ -141,15 +174,17 @@ function applyPolicy(result) {
 
 async function showSettings() { applyPolicy(await request({type: 'read'})); }
 
-async function save(next, message, previous = domains) {
+async function save(next, message, nextExceptions = exceptions, previous = domains, previousExceptions = exceptions) {
   if (busy) return false;
   busy = true;
   for (const control of settings.querySelectorAll('button,input,select')) control.disabled = true;
   try {
-    const result = await request({type: 'save', domains: next.join('\n'), revision});
+    const result = await request({type: 'save', domains: next.join('\n'), exceptions: nextExceptions.join('\n'), revision});
     domains = result.domains;
+    exceptions = result.exceptions;
     revision = result.revision;
     undoDomains = [...previous];
+    undoExceptions = [...previousExceptions];
     $('#undo').hidden = false;
     render();
     $('#status').textContent = `${message} Reload open websites to apply changes.`;
@@ -167,6 +202,7 @@ async function save(next, message, previous = domains) {
     busy = false;
     for (const control of settings.querySelectorAll('button,input,select')) control.disabled = false;
     $('#apply-mode').disabled = mode !== 'legacy' && $('#mode-select').value === mode;
+    $('#remove-exception').disabled = !selectedException;
   }
 }
 
@@ -182,9 +218,10 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
   if (areaName === 'session' && changes.accessLockVersion?.newValue) { if (!settings.hidden) showLocked(true); return; }
   if (areaName !== 'session' || !changes.pendingSite?.newValue || settings.hidden) return;
   request({type: 'read'}).then(result => {
-    if (result.revision !== revision) { undoDomains = null; $('#undo').hidden = true; }
+    if (result.revision !== revision) { undoDomains = null; undoExceptions = null; $('#undo').hidden = true; }
     currentSite = result.currentSite || '';
     domains = [...result.domains];
+    exceptions = [...(result.exceptions ?? [])];
     revision = result.revision;
     render();
     setExpiry(result.expiresAt);
@@ -215,6 +252,7 @@ $('#mode-form').addEventListener('submit', async event => {
     const result = await request({type: 'setMode', mode: nextMode, revision});
     applyPolicy(result);
     undoDomains = null;
+    undoExceptions = null;
     $('#undo').hidden = true;
     $('#status').textContent = `${nextMode === 'allow' ? 'Allowlist' : 'Blocklist'} is now active. Reload open websites to apply changes. ${result.migrationNotice || ''}`;
   } catch (error) {
@@ -240,7 +278,12 @@ $('#add-form').addEventListener('submit', async event => {
 $('#search').addEventListener('input', render);
 $('#sites').addEventListener('change', () => { selected = $('#sites').value; render(); });
 $('#current-site-action').addEventListener('click', () => {
-  if (domains.includes(currentSite)) {
+  const exception = mode === 'allow' ? exceptions.find(domain => matchesDomain(currentSite, domain)) : '';
+  if (exception) {
+    selectedException = exception;
+    render();
+    $('#exceptions').focus();
+  } else if (domains.includes(currentSite)) {
     $('#search').value = '';
     selected = currentSite;
     render();
@@ -254,12 +297,32 @@ $('#current-site-action').addEventListener('click', () => {
 $('#remove').addEventListener('click', async () => {
   const domain = selected;
   selected = '';
-  if (!await save(domains.filter(item => item !== domain), `${domain} removed.`)) { selected = domain; render(); }
+  const next = domains.filter(item => item !== domain);
+  const nextExceptions = exceptions.filter(child => next.some(parent => child !== parent && child.endsWith(`.${parent}`)));
+  if (!await save(next, `${domain} removed.`, nextExceptions)) { selected = domain; render(); }
+});
+$('#exception-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const input = $('#exception-domain').value.trim();
+  if (exceptions.includes(input.toLowerCase())) { $('#status').textContent = `${input} is already blocked as an exception.`; return; }
+  const saved = await save(domains, `${input} blocked under its allowed parent.`, [...exceptions, input]);
+  if (saved) {
+    $('#exception-domain').value = '';
+    try { selectedException = new URL(`https://${input}`).hostname.toLowerCase(); } catch { selectedException = ''; }
+    render();
+  }
+});
+$('#exceptions').addEventListener('change', () => { selectedException = $('#exceptions').value; render(); });
+$('#remove-exception').addEventListener('click', async () => {
+  const domain = selectedException;
+  selectedException = '';
+  if (!await save(domains, `${domain} exception removed.`, exceptions.filter(item => item !== domain))) { selectedException = domain; render(); }
 });
 $('#undo').addEventListener('click', async () => {
   if (!undoDomains) return;
   const previous = [...undoDomains];
-  if (await save(previous, 'Last change undone.')) { undoDomains = null; $('#undo').hidden = true; }
+  const previousExceptions = [...undoExceptions];
+  if (await save(previous, 'Last change undone.', previousExceptions)) { undoDomains = null; undoExceptions = null; $('#undo').hidden = true; }
 });
 $('#lock').addEventListener('click', async () => {
   try { await request({type: 'lock'}); showLocked(true); }
