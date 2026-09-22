@@ -1,6 +1,6 @@
 # Privacy policy: BrowseLatch
 
-Effective date: September 21, 2026.
+Effective date: September 22, 2026.
 
 BrowseLatch is a Microsoft Edge extension that either allows only listed websites or blocks listed websites, depending on the mode you select. It was previously called Only Listed Websites.
 

@@ -20,6 +20,7 @@ If using the ZIP, extract it first and select the extracted folder containing ma
 - **Allowlist** mode permits listed domains and blocks other websites. **Blocklist** mode blocks listed domains and permits other websites. Only one mode is active at a time. Each mode remembers its own list when you switch.
 - A listed domain includes its subdomains, on all ports and paths. For example, `example.com` covers `www.example.com` but never `example.com.attacker.test` or `notexample.com`.
 - Enter domains only, not URLs, paths, ports or wildcard patterns. Internationalized domains are converted to ASCII (punycode).
+- Public suffixes such as `com`, `co.nz`, and `github.io` are rejected using a complete Public Suffix List bundled with the extension. The list works offline; update the bundled snapshot with `node scripts/update-psl.mjs` before future releases.
 - The settings list shows the active mode's domains. Search, select, or remove an entry; changes save immediately and the last change can be undone. **Check a website** explains whether a domain is allowed or blocked under the current list.
 - Search saved domains as you type. Clicking the toolbar button on a website opens settings with an **Add this website** shortcut; you still need the parent password to change the rule. The clicked domain is kept in memory only until settings are unlocked and shown.
 - In Allowlist mode, unlisted HTTP/HTTPS page navigations redirect to a local blocked page, and unlisted embedded frames remain blocked. In Blocklist mode, listed websites redirect to that page and other websites can open.
@@ -41,11 +42,11 @@ The password makes casual changes harder, but this is not tamper-proof parental 
 3. Remove `example.com`: expect it to be blocked again. Use **Undo** and verify it opens again.
 4. Switch to empty Blocklist mode: both example.com and wikipedia.org should open. Add `example.com`: it should be blocked while wikipedia.org stays open.
 5. Switch back to Allowlist and verify its previous list is restored. Restart Edge and repeat.
-6. Enter `https://example.com/path`, `*.com`, or `com`: adding must fail and retain the old rules.
+6. Enter `https://example.com/path`, `*.com`, `com`, or `co.nz`: adding must fail and retain the old rules.
 7. Check allowed and blocked outcomes with **Check a website**. On a website, click the extension toolbar button, unlock settings, and verify the **Current website** shortcut fills or selects its domain.
 
 Run policy, worker, and settings-page unit tests with `npm ci` followed by `npm test`.
 
 Build the store upload package with `python build.py`. The ZIP is written to `dist/` with only runtime files. Generate icons from the editable SVG with `npm run icons`. GitHub Actions runs the tests and uploads the ZIP as a workflow artifact.
 
-References: https://learn.microsoft.com/en-us/microsoft-edge/extensions/getting-started/extension-sideloading and https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest
+References: https://learn.microsoft.com/en-us/microsoft-edge/extensions/getting-started/extension-sideloading, https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest, and https://publicsuffix.org/list/ . The bundled list is licensed under the Mozilla Public License 2.0; see `PSL-LICENSE`.

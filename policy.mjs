@@ -1,3 +1,5 @@
+import {isPublicSuffix} from './public-suffix.mjs';
+
 export function parseDomains(text) {
   if (typeof text !== 'string' || text.length > 100000) throw new Error('Enter a list of at most 500 domains.');
   const domains = new Set();
@@ -10,17 +12,13 @@ export function parseDomains(text) {
     if (host.endsWith('.') || host.length > 253 || !host.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
       throw new Error(`Invalid domain: ${entry}`);
     }
-    // A bare suffix would match every site beneath it in DNR rules.
-    if (PUBLIC_SUFFIXES.has(host) || !host.includes('.')) throw new Error(`Enter a specific website, not a domain suffix: ${entry}`);
+    // A public suffix would match unrelated sites beneath it in DNR rules.
+    if (isPublicSuffix(host)) throw new Error(`Enter a specific website, not a domain suffix: ${entry}`);
     domains.add(host);
   }
   if (domains.size > 500) throw new Error('The maximum is 500 domains.');
   return [...domains].sort();
 }
-
-// Common public suffixes are listed explicitly so validation works offline.
-// This is a guardrail, not a complete Public Suffix List implementation.
-const PUBLIC_SUFFIXES = new Set(['com', 'org', 'net', 'edu', 'gov', 'mil', 'int', 'io', 'app', 'dev', 'uk', 'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'au', 'com.au', 'net.au', 'org.au', 'in', 'co.in', 'com.br', 'co.jp', 'github.io']);
 
 export function buildRules(domains, mode = 'allow') {
   // DNR otherwise excludes main_frame by default. An empty excludedResourceTypes

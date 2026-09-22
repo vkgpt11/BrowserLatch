@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {parseDomains, buildRules} from '../policy.mjs';
+import {isPublicSuffix} from '../public-suffix.mjs';
 import {createPasswordRecord, verifyPassword, validatePassword} from '../auth.mjs';
 
 globalThis.crypto ??= webcrypto;
@@ -22,10 +23,20 @@ test('password records are salted and never store the plaintext', async () => {
 test('domain input normalizes names and rejects unsafe broad entries', () => {
   assert.deepEqual(parseDomains('EXAMPLE.com\nexample.com\n\nbücher.de'), ['example.com', 'xn--bcher-kva.de']);
   assert.deepEqual(parseDomains(''), []);
-  for (const input of ['com', 'co.uk', 'github.io', 'https://example.com/path', '*.com', 'example.com:443', 'user@example.com', 'example.com?q=x', 'example.com.', '-bad.com', 'a..com', 'example.com\\evil', 'two words']) {
+  for (const input of ['com', 'co.uk', 'co.nz', 'com.mx', 'github.io', 'test.ck', 'xn--55qx5d.cn', 'https://example.com/path', '*.com', 'example.com:443', 'user@example.com', 'example.com?q=x', 'example.com.', '-bad.com', 'a..com', 'example.com\\evil', 'two words']) {
     assert.throws(() => parseDomains(input), undefined, input);
   }
   assert.throws(() => parseDomains(Array.from({length: 501}, (_, n) => `a${n}.test`).join('\n')));
+});
+
+test('bundled PSL handles country suffixes, private suffixes, wildcard rules and exceptions', () => {
+  for (const suffix of ['com', 'co.uk', 'co.nz', 'com.mx', 'github.io', 'test.ck', 'c.kobe.jp', 'xn--55qx5d.cn']) {
+    assert.equal(isPublicSuffix(suffix), true, suffix);
+  }
+  for (const site of ['youtube.com', 'www.ck', 'city.kobe.jp', 'my.github.io', 'xn--85x722f.xn--55qx5d.cn']) {
+    assert.equal(isPublicSuffix(site), false, site);
+    assert.deepEqual(parseDomains(site), [site]);
+  }
 });
 
 test('allowlist mode only exempts listed page navigations and their supporting resources', async () => {

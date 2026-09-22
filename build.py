@@ -6,6 +6,7 @@ import zipfile
 root = Path(__file__).resolve().parent
 manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
 files = ['manifest.json', 'rules.json', 'background.js', 'policy.mjs', 'auth.mjs',
+         'public-suffix.mjs', 'public-suffix-data.mjs', 'PSL-LICENSE',
          'options.html', 'options.js', 'blocked.html', 'blocked.js', 'styles.css']
 files += list(manifest['icons'].values())
 destination = root / 'dist'

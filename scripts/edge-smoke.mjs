@@ -37,6 +37,7 @@ try {
   let state = await message({type: 'read'});
   if (state.mode === 'block') state = await message({type: 'setMode', mode: 'allow', revision: state.revision});
   assert.equal(state.mode, 'allow');
+  assert.equal((await message({type: 'save', domains: 'co.nz', revision: state.revision})).ok, false);
   state = await message({type: 'save', domains: 'youtube.com', revision: state.revision});
   assert.equal(state.ok, true, JSON.stringify(state));
   const allowYouTube = await outcome('https://youtube.com/');
