@@ -13,6 +13,7 @@ chrome.action.onClicked.addListener(async tab => {
   try {
     const url = new URL(tab.url);
     if (url.protocol === 'http:' || url.protocol === 'https:') host = url.hostname.toLowerCase();
+    else if (url.origin === chrome.runtime.getURL('').slice(0, -1) && url.pathname === '/blocked.html') host = validBlockedHost(url.searchParams.get('site'));
   } catch {}
   if (host) await chrome.storage.session.set({pendingSite: {host, capturedAt: Date.now()}});
   else await chrome.storage.session.remove('pendingSite');
@@ -21,19 +22,32 @@ chrome.action.onClicked.addListener(async tab => {
 chrome.runtime.onInstalled.addListener(({reason}) => {
   chrome.storage.local.setAccessLevel?.({accessLevel: 'TRUSTED_CONTEXTS'});
   if (reason === 'install') chrome.runtime.openOptionsPage();
-  if (reason === 'update') {
+  if (reason === 'install' || reason === 'update') {
     const migration = queue.then(async () => {
       const rules = await chrome.declarativeNetRequest.getDynamicRules();
-      const domains = rules.find(rule => rule.id === 100)?.condition.requestDomains ?? [];
-      if (!domains.length || rules.some(rule => [101, 102, 104].includes(rule.id))) return;
+      const policy = policyFromRules(rules);
+      const blockedPage = chrome.runtime.getURL('blocked.html');
+      let next;
+      if (policy.mode === 'legacy') {
+        next = [...buildRules(policy.legacyAllowed, 'allow', blockedPage),
+          ...buildRules(policy.legacyBlocked, 'block', blockedPage).filter(rule => rule.id === 102 || rule.id === 103)];
+      } else next = buildRules(policy.domains, policy.mode, blockedPage);
       await chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(domains)
+        removeRuleIds: rules.map(rule => rule.id), addRules: next
       });
     });
-    queue = migration.catch(error => console.error('Could not update allowlist rules:', error));
+    queue = migration.catch(error => console.error('Could not update website rules:', error));
     return migration;
   }
 });
+
+function validBlockedHost(value) {
+  if (!value || /[\s/:@?#*\\]/u.test(value)) return '';
+  try {
+    const host = new URL(`https://${value}`).hostname.toLowerCase();
+    return host === value.toLowerCase() && host.length <= 253 && host.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ? host : '';
+  } catch { return ''; }
+}
 
 // Dynamic rules are the single source of truth and persist across browser restarts.
 // Serialize saves; a failed atomic rule update leaves the previous list intact.
@@ -105,7 +119,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (message.type === 'save') {
         if (policy.mode === 'legacy') throw new Error('Choose a list mode before editing websites.');
         const domains = parseDomains(message.domains);
-        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(domains, policy.mode)});
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(domains, policy.mode, chrome.runtime.getURL('blocked.html'))});
       } else {
         if (!['allow', 'block'].includes(message.mode)) throw new Error('Choose Allowlist or Blocklist mode.');
         if (message.mode === policy.mode) throw new Error('This mode is already active.');
@@ -118,7 +132,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         if (message.mode === 'allow' && lists.legacyConflicts?.length) migrationNotice = `${lists.legacyConflicts.join(', ')} were left off the allowlist because they contain previously blocked subdomains. Review and add only domains you want fully allowed.`;
         const next = parseDomains((lists[message.mode] ?? []).join('\n'));
         await chrome.storage.local.set({[SAVED_LISTS_KEY]: lists});
-        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(next, message.mode)});
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(next, message.mode, chrome.runtime.getURL('blocked.html'))});
       }
       rules = await chrome.declarativeNetRequest.getDynamicRules();
       policy = policyFromRules(rules);

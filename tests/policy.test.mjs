@@ -8,6 +8,7 @@ import {isPublicSuffix} from '../public-suffix.mjs';
 import {createPasswordRecord, verifyPassword, validatePassword} from '../auth.mjs';
 
 globalThis.crypto ??= webcrypto;
+const BLOCKED_PAGE = 'chrome-extension://unit-test/blocked.html';
 
 test('password records are salted and never store the plaintext', async () => {
   assert.throws(() => validatePassword('short'));
@@ -40,8 +41,9 @@ test('bundled PSL handles country suffixes, private suffixes, wildcard rules and
 });
 
 test('allowlist mode only exempts listed page navigations and their supporting resources', async () => {
-  assert.deepEqual(buildRules([]), []);
-  const [allow, supporting] = buildRules(['youtube.com'], 'allow');
+  assert.deepEqual(buildRules([], 'allow', BLOCKED_PAGE).map(rule => rule.id), [105]);
+  const [fallback, allow, supporting] = buildRules(['youtube.com'], 'allow', BLOCKED_PAGE);
+  assert.equal(fallback.action.redirect.regexSubstitution, `${BLOCKED_PAGE}?site=\\1`);
   assert.deepEqual(allow.condition.requestDomains, ['youtube.com']);
   assert.ok(allow.condition.resourceTypes.includes('main_frame'));
   assert.deepEqual(supporting.condition.initiatorDomains, ['youtube.com']);
@@ -52,16 +54,16 @@ test('allowlist mode only exempts listed page navigations and their supporting r
 });
 
 test('blocklist mode exempts unlisted requests and blocks listed destinations', () => {
-  const rules = buildRules(['example.com'], 'block');
-  assert.deepEqual(rules.map(rule => rule.id), [104, 102, 103]);
-  assert.ok(rules[0].condition.resourceTypes.includes('main_frame'));
-  assert.equal(rules[0].condition.requestDomains, undefined);
-  assert.ok(rules[1].priority > rules[0].priority);
-  assert.deepEqual(rules[1].condition.requestDomains, ['example.com']);
-  assert.equal(rules[1].action.redirect.extensionPath, '/blocked.html');
-  assert.equal(rules[2].action.type, 'block');
-  assert.deepEqual(buildRules([], 'block').map(rule => rule.id), [104]);
-  assert.throws(() => buildRules([], 'invalid'));
+  const rules = buildRules(['example.com'], 'block', BLOCKED_PAGE);
+  assert.deepEqual(rules.map(rule => rule.id), [105, 104, 102, 103]);
+  assert.ok(rules[1].condition.resourceTypes.includes('main_frame'));
+  assert.equal(rules[1].condition.requestDomains, undefined);
+  assert.ok(rules[2].priority > rules[1].priority);
+  assert.deepEqual(rules[2].condition.requestDomains, ['example.com']);
+  assert.equal(rules[2].action.redirect.regexSubstitution, `${BLOCKED_PAGE}?site=\\1`);
+  assert.equal(rules[3].action.type, 'block');
+  assert.deepEqual(buildRules([], 'block', BLOCKED_PAGE).map(rule => rule.id), [105, 104]);
+  assert.throws(() => buildRules([], 'invalid', BLOCKED_PAGE));
 });
 
 async function worker(initialRules = []) {
@@ -102,7 +104,7 @@ test('worker requires a password, rejects stale saves, and preserves lists when 
   state = await app.send({type: 'setMode', mode: 'block', revision: state.revision});
   assert.equal(state.mode, 'block');
   assert.deepEqual([...state.domains], []);
-  assert.deepEqual(app.getRules().map(rule => rule.id), [104]);
+  assert.deepEqual(app.getRules().map(rule => rule.id), [105, 104]);
   state = await app.send({type: 'save', domains: 'bad.test', revision: state.revision});
   state = await app.send({type: 'setMode', mode: 'allow', revision: state.revision});
   assert.deepEqual([...state.domains], ['youtube.com']);
@@ -157,9 +159,27 @@ test('worker only accepts options-page messages and migrates old allow rules', a
   const listener = app.chrome.runtime.onMessage;
   assert.ok(listener);
   await app.installedListener({reason: 'update'});
-  assert.deepEqual(app.getRules().map(rule => rule.id), [100, 101]);
+  assert.deepEqual(app.getRules().map(rule => rule.id), [105, 100, 101]);
   await app.send({type: 'setup', password: 'parent passphrase'});
   await app.actionListener({url: 'https://www.youtube.com/watch?v=sample'});
   assert.equal((await app.send({type: 'read'})).currentSite, 'www.youtube.com');
   assert.equal((await app.send({type: 'read'})).currentSite, '');
+});
+
+test('installation adds hostname redirects and update keeps mixed legacy lists', async () => {
+  const fresh = await worker();
+  await fresh.installedListener({reason: 'install'});
+  assert.deepEqual(fresh.getRules().map(rule => rule.id), [105]);
+
+  const legacy = await worker([
+    {id: 100, condition: {requestDomains: ['example.com']}},
+    {id: 102, condition: {requestDomains: ['kids.example.com']}}
+  ]);
+  await legacy.installedListener({reason: 'update'});
+  assert.deepEqual(legacy.getRules().map(rule => rule.id), [105, 100, 101, 102, 103]);
+  await legacy.send({type: 'setup', password: 'parent passphrase'});
+  const state = await legacy.send({type: 'read'});
+  assert.equal(state.mode, 'legacy');
+  assert.deepEqual([...state.legacyAllowed], ['example.com']);
+  assert.deepEqual([...state.legacyBlocked], ['kids.example.com']);
 });

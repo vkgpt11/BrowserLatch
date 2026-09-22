@@ -43,7 +43,7 @@ try {
   const allowYouTube = await outcome('https://youtube.com/');
   const blockOther = await outcome('https://wikipedia.org/');
   assert.equal(allowYouTube.matchedRules[0]?.ruleId, 100, JSON.stringify(allowYouTube));
-  assert.equal(blockOther.matchedRules[0]?.ruleId, 2, JSON.stringify(blockOther));
+  assert.equal(blockOther.matchedRules[0]?.ruleId, 105, JSON.stringify(blockOther));
   state = await message({type: 'setMode', mode: 'block', revision: state.revision});
   assert.equal(state.ok, true, JSON.stringify(state));
   const allowOther = await outcome('https://wikipedia.org/');
@@ -52,6 +52,15 @@ try {
   assert.equal(state.ok, true, JSON.stringify(state));
   const blockYouTube = await outcome('https://youtube.com/');
   assert.equal(blockYouTube.matchedRules[0]?.ruleId, 102, JSON.stringify(blockYouTube));
+  const deniedTab = await (await fetch(`http://127.0.0.1:${port}/json/new?https://youtube.com/`, {method: 'PUT'})).json();
+  let deniedUrl = '';
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    deniedUrl = pages.find(page => page.id === deniedTab.id)?.url ?? '';
+    if (deniedUrl.includes('/blocked.html')) break;
+  }
+  assert.match(deniedUrl, /^chrome-extension:\/\/[^/]+\/blocked\.html\?site=youtube\.com$/);
   await call('Page.reload');
   await new Promise(resolve => setTimeout(resolve, 500));
   assert.equal(await evaluate("document.querySelector('#list-title').textContent"), 'Blocked websites');
@@ -60,5 +69,5 @@ try {
     const shot = await call('Page.captureScreenshot', {format: 'png', captureBeyondViewport: true});
     await writeFile(process.env.EDGE_SCREENSHOT, Buffer.from(shot.data, 'base64'));
   }
-  console.log('Edge DNR smoke checks passed: allowlist allow/block and blocklist allow/block.');
+  console.log('Edge DNR smoke checks passed: both list modes and denied hostname redirect.');
 } finally {socket.close();}
