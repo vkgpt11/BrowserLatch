@@ -77,6 +77,15 @@ test('allowlist can preserve blocked children without denying their allowed pare
   assert.throws(() => buildRules(['example.com'], 'allow', BLOCKED_PAGE, ['example.com']));
 });
 
+test('strict content setting removes the unlisted supporting-request exemption', () => {
+  const strict = buildRules(['youtube.com'], 'allow', BLOCKED_PAGE, [], false);
+  assert.deepEqual(strict.map(rule => rule.id), [105, 100]);
+  const compatible = buildRules(['youtube.com'], 'allow', BLOCKED_PAGE, [], true);
+  assert.deepEqual(compatible.map(rule => rule.id), [105, 100, 101]);
+  assert.equal(compatible[2].condition.resourceTypes.includes('sub_frame'), false);
+  assert.throws(() => buildRules(['youtube.com'], 'allow', BLOCKED_PAGE, [], 'false'));
+});
+
 async function worker(initialRules = []) {
   let listener, installedListener, actionListener, persisted = structuredClone(initialRules), fail = false;
   const local = {};
@@ -110,15 +119,22 @@ test('worker requires a password, rejects stale saves, and preserves lists when 
   const oldRevision = state.revision;
   state = await app.send({type: 'save', domains: 'youtube.com', revision: state.revision});
   assert.deepEqual([...state.domains], ['youtube.com']);
+  state = await app.send({type: 'setSupporting', enabled: false, revision: state.revision});
+  assert.equal(state.supportingResources, false);
+  assert.deepEqual(app.getRules().map(rule => rule.id), [105, 100]);
+  assert.equal((await app.send({type: 'setSupporting', enabled: 'false', revision: state.revision})).ok, false);
   assert.equal((await app.send({type: 'save', domains: 'other.test', revision: oldRevision})).ok, false);
   assert.deepEqual([...(await app.send({type: 'read'})).domains], ['youtube.com']);
   state = await app.send({type: 'setMode', mode: 'block', revision: state.revision});
   assert.equal(state.mode, 'block');
   assert.deepEqual([...state.domains], []);
   assert.deepEqual(app.getRules().map(rule => rule.id), [105, 104]);
+  assert.equal((await app.send({type: 'setSupporting', enabled: true, revision: state.revision})).ok, false);
   state = await app.send({type: 'save', domains: 'bad.test', revision: state.revision});
   state = await app.send({type: 'setMode', mode: 'allow', revision: state.revision});
   assert.deepEqual([...state.domains], ['youtube.com']);
+  assert.equal(state.supportingResources, false);
+  assert.deepEqual(app.getRules().map(rule => rule.id), [105, 100]);
   state = await app.send({type: 'setMode', mode: 'block', revision: state.revision});
   assert.deepEqual([...state.domains], ['bad.test']);
   app.setFail(true);
@@ -205,4 +221,9 @@ test('installation adds hostname redirects and update keeps mixed legacy lists',
   const existing = await worker(buildRules(['example.com'], 'allow', BLOCKED_PAGE, ['kids.example.com']));
   await existing.installedListener({reason: 'update'});
   assert.deepEqual(existing.getRules().find(rule => rule.id === 100).condition.excludedRequestDomains, ['kids.example.com']);
+
+  const strict = await worker(buildRules(['youtube.com'], 'allow', BLOCKED_PAGE, [], false));
+  strict.local.allowSupportingResources = false;
+  await strict.installedListener({reason: 'update'});
+  assert.deepEqual(strict.getRules().map(rule => rule.id), [105, 100]);
 });

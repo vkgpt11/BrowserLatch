@@ -37,6 +37,7 @@ try {
   let state = await message({type: 'read'});
   if (state.mode === 'block') state = await message({type: 'setMode', mode: 'allow', revision: state.revision});
   assert.equal(state.mode, 'allow');
+  if (!state.supportingResources) state = await message({type: 'setSupporting', enabled: true, revision: state.revision});
   assert.equal((await message({type: 'save', domains: 'co.nz', revision: state.revision})).ok, false);
   state = await message({type: 'save', domains: 'youtube.com', revision: state.revision});
   assert.equal(state.ok, true, JSON.stringify(state));
@@ -75,14 +76,27 @@ try {
   assert.equal((await outcome('https://games.kids.example.com/')).matchedRules[0]?.ruleId, 105);
   assert.equal((await outcome('https://kids.example.com/logo.png', 'image', 'https://www.example.com')).matchedRules[0]?.ruleId, 106);
   assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 101);
+  assert.equal((await outcome('https://signin.test/', 'sub_frame', 'https://www.example.com')).matchedRules[0]?.ruleId, 1);
+  state = await message({type: 'setSupporting', enabled: false, revision: state.revision});
+  assert.equal(state.supportingResources, false);
+  assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 1);
+  assert.equal((await outcome('https://www.example.com/logo.png', 'image', 'https://www.example.com')).matchedRules[0]?.ruleId, 100);
+  state = await message({type: 'setMode', mode: 'block', revision: state.revision});
+  state = await message({type: 'setMode', mode: 'allow', revision: state.revision});
+  assert.equal(state.supportingResources, false);
+  assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 1);
   await call('Page.reload');
   await new Promise(resolve => setTimeout(resolve, 500));
   assert.equal(await evaluate("document.querySelector('#exceptions-panel').hidden"), false);
   assert.equal(await evaluate("document.querySelector('#exceptions').options[0].value"), 'kids.example.com');
+  assert.equal(await evaluate("document.querySelector('#supporting-resources').checked"), false);
   if (process.env.EDGE_SCREENSHOT) {
     await evaluate("document.querySelector('#exceptions-panel').scrollIntoView()");
     const shot = await call('Page.captureScreenshot', {format: 'png', captureBeyondViewport: true});
     await writeFile(process.env.EDGE_SCREENSHOT, Buffer.from(shot.data, 'base64'));
   }
-  console.log('Edge DNR smoke checks passed: both list modes, denied hostname redirect, and blocked child exception.');
+  state = await message({type: 'save', domains: 'example.com\nsignin.test', exceptions: 'kids.example.com', revision: state.revision});
+  assert.equal(state.ok, true, JSON.stringify(state));
+  assert.equal((await outcome('https://signin.test/', 'sub_frame', 'https://www.example.com')).matchedRules[0]?.ruleId, 100);
+  console.log('Edge DNR smoke checks passed: both list modes, denied hostname redirect, blocked child exception, and strict supporting requests.');
 } finally {socket.close();}

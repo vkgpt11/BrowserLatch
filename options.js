@@ -4,6 +4,7 @@ const authCard = $('#auth-card');
 let mode = 'allow';
 let domains = [];
 let exceptions = [];
+let supportingResources = true;
 let revision = '';
 let selected = '';
 let selectedException = '';
@@ -43,6 +44,7 @@ function showLocked(configured, message = '') {
   expiresAt = 0;
   domains = [];
   exceptions = [];
+  supportingResources = true;
   revision = '';
   undoDomains = null;
   undoExceptions = null;
@@ -51,6 +53,7 @@ function showLocked(configured, message = '') {
   selectedException = '';
   $('#sites').replaceChildren();
   $('#exceptions').replaceChildren();
+  $('#supporting-resources').checked = true;
   $('#check-result').textContent = '';
   $('#legacy-backup-list').textContent = '';
   $('#current-site-domain').textContent = '';
@@ -85,6 +88,7 @@ function render() {
   $('#legacy-note').hidden = !legacy;
   $('#rules-panel').hidden = legacy;
   $('#exceptions-panel').hidden = legacy || mode !== 'allow';
+  $('#network-panel').hidden = legacy || mode !== 'allow';
   $('#check-panel').hidden = legacy;
   $('#mode-select').value = legacy ? 'allow' : mode;
   $('#apply-mode').disabled = !legacy && $('#mode-select').value === mode;
@@ -95,6 +99,7 @@ function render() {
   $('#list-title').textContent = mode === 'allow' ? 'Allowed websites' : 'Blocked websites';
   $('#list-description').textContent = mode === 'allow' ? 'These domains and their subdomains can open, except any blocked subdomains below.' : 'These domains and their subdomains cannot open.';
   $('#count').textContent = `${domains.length} listed`;
+  $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources;
   const exceptionList = $('#exceptions');
   exceptionList.replaceChildren();
   exceptionList.size = Math.min(9, Math.max(3, exceptions.length));
@@ -155,6 +160,8 @@ function applyPolicy(result) {
   mode = result.mode;
   domains = [...result.domains];
   exceptions = [...(result.exceptions ?? [])];
+  supportingResources = result.supportingResources ?? true;
+  $('#supporting-resources').checked = supportingResources;
   revision = result.revision;
   undoDomains = null;
   undoExceptions = null;
@@ -182,6 +189,7 @@ async function save(next, message, nextExceptions = exceptions, previous = domai
     const result = await request({type: 'save', domains: next.join('\n'), exceptions: nextExceptions.join('\n'), revision});
     domains = result.domains;
     exceptions = result.exceptions;
+    supportingResources = result.supportingResources ?? true;
     revision = result.revision;
     undoDomains = [...previous];
     undoExceptions = [...previousExceptions];
@@ -203,6 +211,7 @@ async function save(next, message, nextExceptions = exceptions, previous = domai
     for (const control of settings.querySelectorAll('button,input,select')) control.disabled = false;
     $('#apply-mode').disabled = mode !== 'legacy' && $('#mode-select').value === mode;
     $('#remove-exception').disabled = !selectedException;
+    $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources;
   }
 }
 
@@ -222,6 +231,8 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
     currentSite = result.currentSite || '';
     domains = [...result.domains];
     exceptions = [...(result.exceptions ?? [])];
+    supportingResources = result.supportingResources ?? true;
+    $('#supporting-resources').checked = supportingResources;
     revision = result.revision;
     render();
     setExpiry(result.expiresAt);
@@ -317,6 +328,33 @@ $('#remove-exception').addEventListener('click', async () => {
   const domain = selectedException;
   selectedException = '';
   if (!await save(domains, `${domain} exception removed.`, exceptions.filter(item => item !== domain))) { selectedException = domain; render(); }
+});
+$('#supporting-resources').addEventListener('change', () => { $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources; });
+$('#network-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (busy || mode !== 'allow' || $('#supporting-resources').checked === supportingResources) return;
+  busy = true;
+  for (const control of settings.querySelectorAll('button,input,select')) control.disabled = true;
+  try {
+    const result = await request({type: 'setSupporting', enabled: $('#supporting-resources').checked, revision});
+    supportingResources = result.supportingResources;
+    revision = result.revision;
+    undoDomains = null;
+    undoExceptions = null;
+    $('#undo').hidden = true;
+    $('#status').textContent = `${supportingResources ? 'Supporting content allowed' : 'Unlisted supporting content blocked'}. Reload open websites to apply changes.`;
+    setExpiry(result.expiresAt);
+  } catch (error) {
+    if (/locked/i.test(error.message)) showLocked(true, error.message);
+    else {
+      $('#status').textContent = `Not saved: ${error.message}`;
+      if (/another tab/i.test(error.message)) await showSettings();
+    }
+  } finally {
+    busy = false;
+    for (const control of settings.querySelectorAll('button,input,select')) control.disabled = false;
+    render();
+  }
 });
 $('#undo').addEventListener('click', async () => {
   if (!undoDomains) return;

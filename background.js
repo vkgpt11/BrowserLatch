@@ -4,6 +4,7 @@ import {createPasswordRecord, verifyPassword} from './auth.mjs';
 const AUTH_KEY = 'parentPassword';
 const FAILURE_KEY = 'authFailures';
 const SAVED_LISTS_KEY = 'savedModeLists';
+const SUPPORT_KEY = 'allowSupportingResources';
 const UNLOCK_MS = 5 * 60 * 1000;
 let unlockedUntil = 0;
 let queue = Promise.resolve();
@@ -26,12 +27,13 @@ chrome.runtime.onInstalled.addListener(({reason}) => {
     const migration = queue.then(async () => {
       const rules = await chrome.declarativeNetRequest.getDynamicRules();
       const policy = policyFromRules(rules);
+      const supporting = (await chrome.storage.local.get(SUPPORT_KEY))[SUPPORT_KEY] !== false;
       const blockedPage = chrome.runtime.getURL('blocked.html');
       let next;
       if (policy.mode === 'legacy') {
-        next = [...buildRules(policy.legacyAllowed, 'allow', blockedPage),
+        next = [...buildRules(policy.legacyAllowed, 'allow', blockedPage, [], supporting),
           ...buildRules(policy.legacyBlocked, 'block', blockedPage).filter(rule => rule.id === 102 || rule.id === 103)];
-      } else next = buildRules(policy.domains, policy.mode, blockedPage, policy.exceptions);
+      } else next = buildRules(policy.domains, policy.mode, blockedPage, policy.exceptions, supporting);
       await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: rules.map(rule => rule.id), addRules: next
       });
@@ -59,7 +61,7 @@ function policyFromRules(rules) {
   return {mode, domains: mode === 'block' ? blocked : allowed, exceptions: mode === 'allow' ? exceptions : [], legacyAllowed: allowed, legacyBlocked: blocked};
 }
 
-function revisionOf(rules) { return JSON.stringify([...rules].sort((a, b) => a.id - b.id)); }
+function revisionOf(rules, supporting) { return JSON.stringify({rules: [...rules].sort((a, b) => a.id - b.id), supporting}); }
 
 async function recordFailure(failure, now) {
   const count = failure.count + 1;
@@ -70,7 +72,7 @@ async function recordFailure(failure, now) {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('options.html')) return;
-  if (!['status', 'setup', 'unlock', 'lock', 'read', 'save', 'setMode', 'changePassword'].includes(message?.type)) return;
+  if (!['status', 'setup', 'unlock', 'lock', 'read', 'save', 'setMode', 'setSupporting', 'changePassword'].includes(message?.type)) return;
   const job = queue.then(async () => {
     const stored = await chrome.storage.local.get([AUTH_KEY, FAILURE_KEY]);
     const record = stored[AUTH_KEY];
@@ -114,16 +116,29 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     }
     let rules = await chrome.declarativeNetRequest.getDynamicRules();
     let policy = policyFromRules(rules);
+    let supporting = (await chrome.storage.local.get(SUPPORT_KEY))[SUPPORT_KEY] !== false;
     let migrationNotice = '';
-    if (message.type === 'save' || message.type === 'setMode') {
-      if (message.revision !== revisionOf(rules)) throw new Error('The list changed in another tab. Reload settings before saving.');
+    if (message.type === 'save' || message.type === 'setMode' || message.type === 'setSupporting') {
+      if (message.revision !== revisionOf(rules, supporting)) throw new Error('Settings changed in another tab. Reload before saving.');
       if (message.type === 'save') {
         if (policy.mode === 'legacy') throw new Error('Choose a list mode before editing websites.');
         const domains = parseDomains(message.domains);
         const requested = message.exceptions === undefined ? policy.exceptions : parseDomains(message.exceptions);
         const exceptions = requested.filter(child => domains.some(parent => child !== parent && child.endsWith(`.${parent}`)));
         if (message.exceptions !== undefined && exceptions.length !== requested.length) throw new Error('Each blocked exception must be below an allowed parent domain.');
-        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(domains, policy.mode, chrome.runtime.getURL('blocked.html'), exceptions)});
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(domains, policy.mode, chrome.runtime.getURL('blocked.html'), exceptions, supporting)});
+      } else if (message.type === 'setSupporting') {
+        if (policy.mode !== 'allow') throw new Error('This setting applies only in Allowlist mode.');
+        if (typeof message.enabled !== 'boolean') throw new Error('Choose whether supporting resources can load.');
+        if (message.enabled === supporting) throw new Error('This resource setting is already active.');
+        const next = buildRules(policy.domains, 'allow', chrome.runtime.getURL('blocked.html'), policy.exceptions, message.enabled);
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: next});
+        try { await chrome.storage.local.set({[SUPPORT_KEY]: message.enabled}); }
+        catch (error) {
+          await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: next.map(rule => rule.id), addRules: rules});
+          throw error;
+        }
+        supporting = message.enabled;
       } else {
         if (!['allow', 'block'].includes(message.mode)) throw new Error('Choose Allowlist or Blocklist mode.');
         if (message.mode === policy.mode) throw new Error('This mode is already active.');
@@ -138,7 +153,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         const next = parseDomains((lists[message.mode] ?? []).join('\n'));
         const exceptions = message.mode === 'allow' ? parseDomains((lists.allowExceptions ?? []).join('\n')).filter(child => next.some(parent => child !== parent && child.endsWith(`.${parent}`))) : [];
         await chrome.storage.local.set({[SAVED_LISTS_KEY]: lists});
-        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(next, message.mode, chrome.runtime.getURL('blocked.html'), exceptions)});
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: buildRules(next, message.mode, chrome.runtime.getURL('blocked.html'), exceptions, supporting)});
       }
       rules = await chrome.declarativeNetRequest.getDynamicRules();
       policy = policyFromRules(rules);
@@ -151,7 +166,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     }
     const savedLists = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
     unlockedUntil = Date.now() + UNLOCK_MS;
-    return {ok: true, configured: true, unlocked: true, expiresAt: unlockedUntil, ...policy, revision: revisionOf(rules), currentSite, migrationNotice, legacyAllowedBackup: savedLists.legacyAllowedBackup ?? []};
+    return {ok: true, configured: true, unlocked: true, expiresAt: unlockedUntil, ...policy, supportingResources: supporting, revision: revisionOf(rules, supporting), currentSite, migrationNotice, legacyAllowedBackup: savedLists.legacyAllowedBackup ?? []};
   });
   queue = job.catch(() => {});
   job.then(respond, error => respond({ok: false, error: error.message}));
