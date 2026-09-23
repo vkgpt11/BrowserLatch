@@ -24,8 +24,9 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
     if (message.revision !== String(state.revision)) return {ok: false, error: 'The list changed in another tab. Reload settings before saving.'};
     if (message.type === 'save') {
       if (state.failSave) return {ok: false, error: 'Rejected update'};
-      try { state.domains = parseDomains(message.domains); state.exceptions = parseDomains(message.exceptions ?? '');
-        if (state.exceptions.some(child => !state.domains.some(parent => child !== parent && child.endsWith(`.${parent}`)))) throw new Error('Each blocked exception must be below an allowed parent domain.'); }
+      try { const nextDomains = parseDomains(message.domains); const nextExceptions = parseDomains(message.exceptions ?? '');
+        if (nextExceptions.some(child => !nextDomains.some(parent => child !== parent && child.endsWith(`.${parent}`)))) throw new Error('Each blocked exception must be below an allowed parent domain.');
+        state.domains = nextDomains; state.exceptions = nextExceptions; }
       catch (error) { return {ok: false, error: error.message}; }
       state.revision++;
     } else if (message.type === 'setSupporting') {
@@ -230,6 +231,72 @@ test('invalid entries and rejected saves retain the previous list', async () => 
   await settle();
   assert.deepEqual(state.domains, ['example.com']);
   page.dom.window.close();
+});
+
+test('invalid blocked subdomain stays on settings and shows its validation error', async () => {
+  const page = await createPage({domains: ['example.com']});
+  const {$, fire, state} = page;
+  $('#exception-domain').value = 'other.test';
+  fire('#exception-form', 'submit');
+  await settle();
+  assert.equal($('#settings').hidden, false);
+  assert.equal($('#auth-card').hidden, true);
+  assert.deepEqual(state.exceptions, []);
+  assert.match($('#exception-status').textContent, /Not saved: Each blocked exception/);
+});
+
+test('a pending mode choice survives searching, selecting, and saving a website', async () => {
+  const page = await createPage({domains: ['example.com']});
+  const {$, fire} = page;
+  $('#mode-select').value = 'block';
+  fire('#mode-select', 'change');
+  $('#search').value = 'example';
+  fire('#search', 'input');
+  $('#sites').value = 'example.com';
+  fire('#sites', 'change');
+  $('#new-domain').value = 'youtube.com';
+  fire('#add-form', 'submit');
+  await settle();
+  assert.equal($('#mode-select').value, 'block');
+  assert.equal($('#apply-mode').disabled, false);
+  assert.equal(page.state.mode, 'allow');
+});
+
+test('website check updates after rule and mode changes and clears when input changes', async () => {
+  const page = await createPage({domains: ['example.com']});
+  const {$, fire} = page;
+  $('#check-domain').value = 'youtube.com';
+  fire('#check-form', 'submit');
+  assert.match($('#check-result').textContent, /Blocked because/);
+  $('#new-domain').value = 'youtube.com';
+  fire('#add-form', 'submit');
+  await settle();
+  assert.match($('#check-result').textContent, /Allowed by youtube.com/);
+  $('#sites').value = 'youtube.com';
+  fire('#sites', 'change');
+  fire('#remove', 'click');
+  await settle();
+  assert.match($('#check-result').textContent, /Blocked because/);
+  $('#mode-select').value = 'block';
+  fire('#mode-form', 'submit');
+  await settle();
+  assert.match($('#check-result').textContent, /Allowed because/);
+  $('#check-domain').value = 'other.test';
+  fire('#check-domain', 'input');
+  assert.equal($('#check-result').textContent, '');
+});
+
+test('save conflict keeps feedback visible after refreshing rules from another tab', async () => {
+  const page = await createPage({domains: ['example.com']});
+  const {$, fire, state} = page;
+  state.domains = ['example.com', 'other.test'];
+  state.revision++;
+  $('#new-domain').value = 'youtube.com';
+  fire('#add-form', 'submit');
+  await settle();
+  assert.equal($('#settings').hidden, false);
+  assert.deepEqual([...$('#sites').options].map(option => option.value), ['example.com', 'other.test']);
+  assert.match($('#status').textContent, /Not saved: The list changed in another tab/);
 });
 
 test('current-site shortcut opens an existing parent rule without adding a duplicate', async () => {

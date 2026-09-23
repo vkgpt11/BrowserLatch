@@ -16,6 +16,7 @@ let undoExceptions = null;
 let busy = false;
 
 function hideUndo() { $('#undo').hidden = true; $('#undo-exception').hidden = true; }
+const isAccessLockedError = message => /^Settings are locked\.|^Too many attempts\. Settings are temporarily locked\./i.test(message);
 
 const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${domain}`);
 
@@ -87,6 +88,19 @@ function explain(host) {
   return match ? `Blocked by ${match}.` : 'Allowed because it is not on your blocked websites list.';
 }
 
+function showCheckResult() {
+  const input = $('#check-domain').value.trim();
+  try {
+    const url = new URL(/^[a-z]+:\/\//i.test(input) ? input : `https://${input}`);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) throw new Error();
+    $('#check-result').textContent = `${url.hostname}: ${explain(url.hostname.toLowerCase())}`;
+  } catch { $('#check-result').textContent = 'Enter a valid website address or domain.'; }
+}
+
+function refreshCheckResult() {
+  if ($('#check-result').textContent) showCheckResult();
+}
+
 function updatePreview() {
   const value = $('#new-domain').value.trim();
   $('#add-preview').textContent = value ? `${mode === 'allow' ? 'Allow' : 'Block'} ${value} and its subdomains.` : '';
@@ -99,7 +113,6 @@ function render() {
   $('#exceptions-panel').hidden = legacy || mode !== 'allow';
   $('#network-panel').hidden = legacy || mode !== 'allow';
   $('#check-panel').hidden = legacy;
-  $('#mode-select').value = legacy ? 'allow' : mode;
   $('#apply-mode').disabled = !legacy && $('#mode-select').value === mode;
   $('#mode-summary').textContent = legacy ? 'Your previous version used both lists. Select one rule to continue.' :
     mode === 'allow' ? `Only websites on this list can open. All others are blocked.${exceptions.length ? ` ${exceptions.length} blocked subdomain ${exceptions.length === 1 ? 'exception is' : 'exceptions are'} active.` : ''}` : 'Websites on this list are blocked. All others can open.';
@@ -171,6 +184,7 @@ function render() {
 
 function applyPolicy(result) {
   mode = result.mode;
+  $('#mode-select').value = mode === 'legacy' ? 'allow' : mode;
   domains = [...result.domains];
   exceptions = [...(result.exceptions ?? [])];
   supportingResources = result.supportingResources ?? true;
@@ -189,6 +203,7 @@ function applyPolicy(result) {
   $('#legacy-backup').hidden = !result.legacyAllowedBackup?.length;
   $('#legacy-backup-list').textContent = (result.legacyAllowedBackup ?? []).join('\n');
   render();
+  refreshCheckResult();
   authCard.hidden = true;
   settings.hidden = false;
   $('#access-status').hidden = false;
@@ -196,6 +211,19 @@ function applyPolicy(result) {
 }
 
 async function showSettings() { applyPolicy(await request({type: 'read'})); }
+
+async function reportSaveError(error, feedback) {
+  if (isAccessLockedError(error.message)) { showLocked(true, error.message); return; }
+  if (/another tab/i.test(error.message)) {
+    try { await showSettings(); }
+    catch (refreshError) {
+      if (isAccessLockedError(refreshError.message)) { showLocked(true, refreshError.message); return; }
+      $(feedback).textContent = `Not saved: ${error.message} Could not refresh settings: ${refreshError.message}`;
+      return;
+    }
+  }
+  $(feedback).textContent = `Not saved: ${error.message}`;
+}
 
 async function save(next, message, nextExceptions = exceptions, previous = domains, previousExceptions = exceptions, feedback = '#status') {
   if (busy) return false;
@@ -215,15 +243,12 @@ async function save(next, message, nextExceptions = exceptions, previous = domai
     $('#status').textContent = '';
     $('#exception-status').textContent = '';
     $(feedback).textContent = `${message} Reload any open website tabs to see the change.`;
+    refreshCheckResult();
     setExpiry(result.expiresAt);
     return true;
   } catch (error) {
-    if (/locked/i.test(error.message)) showLocked(true, error.message);
-    else {
-      $(feedback).textContent = `Not saved: ${error.message}`;
-      if (/another tab/i.test(error.message)) await showSettings();
-      render();
-    }
+    await reportSaveError(error, feedback);
+    if (!settings.hidden) render();
     return false;
   } finally {
     busy = false;
@@ -254,8 +279,9 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
     $('#supporting-resources').checked = supportingResources;
     revision = result.revision;
     render();
+    refreshCheckResult();
     setExpiry(result.expiresAt);
-  }).catch(error => { if (/locked/i.test(error.message)) showLocked(true, error.message); });
+  }).catch(error => { if (isAccessLockedError(error.message)) showLocked(true, error.message); });
 });
 
 $('#setup-form').addEventListener('submit', async event => {
@@ -287,7 +313,7 @@ $('#mode-form').addEventListener('submit', async event => {
     hideUndo();
     $('#status').textContent = `Website rule changed. Reload any open website tabs to see the change. ${result.migrationNotice || ''}`;
   } catch (error) {
-    if (/locked/i.test(error.message)) showLocked(true, error.message);
+    if (isAccessLockedError(error.message)) showLocked(true, error.message);
     else $('#mode-summary').textContent = `Mode not changed: ${error.message}`;
   }
 });
@@ -370,11 +396,7 @@ $('#network-form').addEventListener('submit', async event => {
     $('#network-status').textContent = `${supportingResources ? 'Extra content is allowed' : 'Extra content from other websites is blocked'}. Reload any open website tabs to see the change.`;
     setExpiry(result.expiresAt);
   } catch (error) {
-    if (/locked/i.test(error.message)) showLocked(true, error.message);
-    else {
-      $('#network-status').textContent = `Not saved: ${error.message}`;
-      if (/another tab/i.test(error.message)) await showSettings();
-    }
+    await reportSaveError(error, '#network-status');
   } finally {
     busy = false;
     for (const control of settings.querySelectorAll('button,input,select')) control.disabled = false;
@@ -395,15 +417,11 @@ $('#lock').addEventListener('click', async () => {
 });
 $('#check-form').addEventListener('submit', event => {
   event.preventDefault();
-  const input = $('#check-domain').value.trim();
-  try {
-    const url = new URL(/^[a-z]+:\/\//i.test(input) ? input : `https://${input}`);
-    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) throw new Error();
-    $('#check-result').textContent = `${url.hostname}: ${explain(url.hostname.toLowerCase())}`;
-  } catch { $('#check-result').textContent = 'Enter a valid website address or domain.'; }
+  showCheckResult();
 });
+$('#check-domain').addEventListener('input', () => { $('#check-result').textContent = ''; });
 $('#change-form').addEventListener('submit', async event => {
   event.preventDefault();
   try { const result = await request({type: 'changePassword', currentPassword: $('#current-password').value, newPassword: $('#replacement-password').value}); event.target.reset(); setExpiry(result.expiresAt); $('#change-status').textContent = 'Password changed.'; }
-  catch (error) { if (/locked/i.test(error.message)) showLocked(true, error.message); else $('#change-status').textContent = error.message; }
+  catch (error) { if (isAccessLockedError(error.message)) showLocked(true, error.message); else $('#change-status').textContent = error.message; }
 });
