@@ -55,9 +55,11 @@ test('one active list can be searched and checked against effective access', asy
   const {$, fire} = page;
   assert.equal($('#list-title').textContent, 'Allowed websites');
   assert.equal($('#sites').options.length, 2);
+  assert.equal($('#match-count').hidden, true);
   $('#search').value = 'YOUTUBE';
   fire('#search', 'input');
   assert.equal($('#sites').options.length, 1);
+  assert.equal($('#match-count').textContent, '1 result');
   $('#check-domain').value = 'https://www.youtube.com/watch?v=sample';
   fire('#check-form', 'submit');
   assert.match($('#check-result').textContent, /Allowed by youtube.com/);
@@ -95,7 +97,9 @@ test('mode switch changes default access and restores the other saved list', asy
   await settle();
   assert.equal(state.mode, 'block');
   assert.deepEqual(state.domains, []);
-  assert.match($('#mode-summary').textContent, /Every other website can open/);
+  assert.match($('#mode-summary').textContent, /All others can open/);
+  assert.equal($('#add-label').textContent, 'Website to block');
+  assert.equal($('#add').textContent, 'Block website');
   $('#new-domain').value = 'bad.test';
   fire('#add-form', 'submit');
   await settle();
@@ -127,8 +131,8 @@ test('parent can inspect, add, remove, and undo blocked child exceptions', async
   const page = await createPage({domains: ['example.com'], exceptions: ['kids.example.com'], currentSite: 'games.kids.example.com'});
   const {$, fire, state} = page;
   assert.equal($('#exceptions-panel').hidden, false);
-  assert.match($('#current-site-state').textContent, /Blocked by exception kids.example.com/);
-  assert.equal($('#current-site-action').textContent, 'View blocked exception');
+  assert.match($('#current-site-state').textContent, /kids.example.com is a blocked subdomain/);
+  assert.equal($('#current-site-action').textContent, 'View blocked subdomain');
   fire('#current-site-action', 'click');
   assert.equal($('#exceptions').value, 'kids.example.com');
   $('#check-domain').value = 'www.example.com';
@@ -136,7 +140,7 @@ test('parent can inspect, add, remove, and undo blocked child exceptions', async
   assert.match($('#check-result').textContent, /Allowed by example.com/);
   $('#check-domain').value = 'games.kids.example.com';
   fire('#check-form', 'submit');
-  assert.match($('#check-result').textContent, /Blocked by exception/);
+  assert.match($('#check-result').textContent, /blocked subdomain/);
   $('#exception-domain').value = 'video.example.com';
   fire('#exception-form', 'submit');
   await settle();
@@ -203,13 +207,40 @@ test('invalid entries and rejected saves retain the previous list', async () => 
   page.dom.window.close();
 });
 
-test('current-site shortcut prefills the entry without changing rules', async () => {
+test('current-site shortcut opens an existing parent rule without adding a duplicate', async () => {
   const page = await createPage({domains: ['youtube.com'], currentSite: 'www.youtube.com'});
   const {$, fire, state} = page;
   assert.match($('#current-site-state').textContent, /Allowed by youtube.com/);
+  assert.equal($('#current-site-action').textContent, 'View saved rule');
   fire('#current-site-action', 'click');
-  assert.equal($('#new-domain').value, 'www.youtube.com');
+  assert.equal($('#sites').value, 'youtube.com');
   assert.deepEqual(state.domains, ['youtube.com']);
+  page.dom.window.close();
+});
+
+test('current-site action adds an unlisted website and can be undone', async () => {
+  const page = await createPage({domains: ['youtube.com'], currentSite: 'aajtak.com'});
+  const {$, fire, state} = page;
+  assert.equal($('#current-site-action').textContent, 'Allow this website');
+  fire('#current-site-action', 'click');
+  await settle();
+  assert.deepEqual(state.domains, ['aajtak.com', 'youtube.com']);
+  assert.equal($('#current-site-action').textContent, 'View saved rule');
+  assert.match($('#status').textContent, /aajtak.com added to allowed websites/);
+  fire('#undo', 'click');
+  await settle();
+  assert.deepEqual(state.domains, ['youtube.com']);
+  page.dom.window.close();
+});
+
+test('current-site action blocks a website in block mode', async () => {
+  const page = await createPage({mode: 'block', currentSite: 'aajtak.com'});
+  const {$, fire, state} = page;
+  assert.equal($('#current-site-action').textContent, 'Block this website');
+  fire('#current-site-action', 'click');
+  await settle();
+  assert.deepEqual(state.domains, ['aajtak.com']);
+  assert.match($('#status').textContent, /aajtak.com added to blocked websites/);
   page.dom.window.close();
 });
 

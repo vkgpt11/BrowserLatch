@@ -77,9 +77,9 @@ function explain(host) {
   const match = domains.filter(domain => matchesDomain(host, domain)).sort((a, b) => b.length - a.length)[0];
   if (mode === 'allow') {
     const exception = exceptions.filter(domain => matchesDomain(host, domain)).sort((a, b) => b.length - a.length)[0];
-    return exception ? `Blocked by exception ${exception}.` : match ? `Allowed by ${match}.` : 'Blocked because it is not on the allowlist.';
+    return exception ? `Blocked because ${exception} is a blocked subdomain.` : match ? `Allowed by ${match}.` : 'Blocked because it is not on your allowed websites list.';
   }
-  return match ? `Blocked by ${match}.` : 'Allowed because it is not on the blocklist.';
+  return match ? `Blocked by ${match}.` : 'Allowed because it is not on your blocked websites list.';
 }
 
 function updatePreview() {
@@ -96,13 +96,15 @@ function render() {
   $('#check-panel').hidden = legacy;
   $('#mode-select').value = legacy ? 'allow' : mode;
   $('#apply-mode').disabled = !legacy && $('#mode-select').value === mode;
-  $('#mode-summary').textContent = legacy ? 'Your previous version used both lists. Select one mode to continue.' :
-    mode === 'allow' ? `Only listed websites open. Every other website is blocked.${exceptions.length ? ` ${exceptions.length} blocked subdomain ${exceptions.length === 1 ? 'exception' : 'exceptions'} active.` : ''}` : 'Listed websites are blocked. Every other website can open.';
+  $('#mode-summary').textContent = legacy ? 'Your previous version used both lists. Select one rule to continue.' :
+    mode === 'allow' ? `Only websites on this list can open. All others are blocked.${exceptions.length ? ` ${exceptions.length} blocked subdomain ${exceptions.length === 1 ? 'exception is' : 'exceptions are'} active.` : ''}` : 'Websites on this list are blocked. All others can open.';
   if (legacy) return;
 
   $('#list-title').textContent = mode === 'allow' ? 'Allowed websites' : 'Blocked websites';
-  $('#list-description').textContent = mode === 'allow' ? 'These domains and their subdomains can open, except any blocked subdomains below.' : 'These domains and their subdomains cannot open.';
-  $('#count').textContent = `${domains.length} listed`;
+  $('#list-description').textContent = mode === 'allow' ? 'These websites and their subdomains can open. You can block specific subdomains below.' : 'These websites and their subdomains cannot open.';
+  $('#count').textContent = `${domains.length} ${domains.length === 1 ? 'website' : 'websites'}`;
+  $('#add-label').textContent = mode === 'allow' ? 'Website to allow' : 'Website to block';
+  $('#add').textContent = mode === 'allow' ? 'Allow website' : 'Block website';
   $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources;
   const exceptionList = $('#exceptions');
   exceptionList.replaceChildren();
@@ -110,7 +112,7 @@ function render() {
   for (const domain of exceptions) {
     const option = document.createElement('option');
     option.value = domain;
-    option.textContent = `✕ Blocked  ${domain}`;
+    option.textContent = domain;
     option.selected = domain === selectedException;
     exceptionList.append(option);
   }
@@ -126,12 +128,13 @@ function render() {
   const query = $('#search').value.trim().toLowerCase();
   const entries = domains.filter(domain => domain.includes(query));
   const list = $('#sites');
-  list.size = Math.min(9, Math.max(3, entries.length));
+  list.setAttribute('aria-label', mode === 'allow' ? 'Allowed websites' : 'Blocked websites');
+  list.size = Math.min(9, Math.max(3, entries.length + 1));
   list.replaceChildren();
   for (const domain of entries) {
     const option = document.createElement('option');
     option.value = domain;
-    option.textContent = `${mode === 'allow' ? '✓ Allowed' : '✕ Blocked'}  ${domain}`;
+    option.textContent = domain;
     option.selected = domain === selected;
     list.append(option);
   }
@@ -143,7 +146,8 @@ function render() {
   }
   if (!entries.includes(selected)) selected = '';
   list.value = selected;
-  $('#match-count').textContent = `${entries.length} matching ${entries.length === 1 ? 'website' : 'websites'}`;
+  $('#match-count').hidden = !query;
+  $('#match-count').textContent = query ? `${entries.length} ${entries.length === 1 ? 'result' : 'results'}` : '';
   $('#editor').hidden = !selected;
   if (selected) {
     $('#selected-domain').textContent = selected;
@@ -153,9 +157,12 @@ function render() {
   }
   $('#current-site-box').hidden = !currentSite;
   if (currentSite) {
+    const exception = mode === 'allow' ? exceptions.find(domain => matchesDomain(currentSite, domain)) : '';
+    const listedParent = domains.filter(domain => matchesDomain(currentSite, domain)).sort((a, b) => b.length - a.length)[0];
     $('#current-site-domain').textContent = currentSite;
     $('#current-site-state').textContent = explain(currentSite);
-    $('#current-site-action').textContent = mode === 'allow' && exceptions.some(domain => matchesDomain(currentSite, domain)) ? 'View blocked exception' : domains.includes(currentSite) ? 'View this entry' : 'Use this website';
+    $('#current-site-action').textContent = exception ? 'View blocked subdomain' : listedParent ? 'View saved rule' : mode === 'allow' ? 'Allow this website' : 'Block this website';
+    $('#current-site-action').classList.toggle('secondary', Boolean(exception || listedParent));
   }
   updatePreview();
 }
@@ -199,7 +206,7 @@ async function save(next, message, nextExceptions = exceptions, previous = domai
     undoExceptions = [...previousExceptions];
     $('#undo').hidden = false;
     render();
-    $('#status').textContent = `${message} Reload open websites to apply changes.`;
+    $('#status').textContent = `${message} Reload any open website tabs to see the change.`;
     setExpiry(result.expiresAt);
     return true;
   } catch (error) {
@@ -262,15 +269,15 @@ $('#mode-form').addEventListener('submit', async event => {
   event.preventDefault();
   const nextMode = $('#mode-select').value;
   if (nextMode === mode) return;
-  const warning = nextMode === 'block' ? 'Switch to Blocklist? Every website not on the blocklist will be allowed.' : 'Switch to Allowlist? Every website not on the allowlist will be blocked.';
-  if (!window.confirm(`${warning}\n\nEach mode keeps its own saved list.`)) { $('#mode-select').value = mode === 'legacy' ? 'allow' : mode; return; }
+  const warning = nextMode === 'block' ? 'Block websites on this list? All other websites will be allowed.' : 'Allow only websites on this list? All other websites will be blocked.';
+  if (!window.confirm(`${warning}\n\nYour allowed and blocked lists are saved separately.`)) { $('#mode-select').value = mode === 'legacy' ? 'allow' : mode; return; }
   try {
     const result = await request({type: 'setMode', mode: nextMode, revision});
     applyPolicy(result);
     undoDomains = null;
     undoExceptions = null;
     $('#undo').hidden = true;
-    $('#status').textContent = `${nextMode === 'allow' ? 'Allowlist' : 'Blocklist'} is now active. Reload open websites to apply changes. ${result.migrationNotice || ''}`;
+    $('#status').textContent = `Website rule changed. Reload any open website tabs to see the change. ${result.migrationNotice || ''}`;
   } catch (error) {
     if (/locked/i.test(error.message)) showLocked(true, error.message);
     else $('#mode-summary').textContent = `Mode not changed: ${error.message}`;
@@ -282,7 +289,7 @@ $('#add-form').addEventListener('submit', async event => {
   event.preventDefault();
   const input = $('#new-domain').value.trim();
   if (domains.includes(input.toLowerCase())) { $('#status').textContent = `${input} is already listed.`; return; }
-  const saved = await save([...domains, input], `${input} added to the ${mode === 'allow' ? 'allowlist' : 'blocklist'}.`);
+  const saved = await save([...domains, input], `${input} added to ${mode === 'allow' ? 'allowed' : 'blocked'} websites.`);
   if (saved) {
     $('#new-domain').value = '';
     $('#search').value = '';
@@ -293,21 +300,22 @@ $('#add-form').addEventListener('submit', async event => {
 
 $('#search').addEventListener('input', render);
 $('#sites').addEventListener('change', () => { selected = $('#sites').value; render(); });
-$('#current-site-action').addEventListener('click', () => {
+$('#current-site-action').addEventListener('click', async () => {
   const exception = mode === 'allow' ? exceptions.find(domain => matchesDomain(currentSite, domain)) : '';
+  const listedParent = domains.filter(domain => matchesDomain(currentSite, domain)).sort((a, b) => b.length - a.length)[0];
   if (exception) {
     selectedException = exception;
     render();
     $('#exceptions').focus();
-  } else if (domains.includes(currentSite)) {
+  } else if (listedParent) {
     $('#search').value = '';
-    selected = currentSite;
+    selected = listedParent;
     render();
     $('#sites').focus();
   } else {
-    $('#new-domain').value = currentSite;
-    updatePreview();
-    $('#new-domain').focus();
+    const host = currentSite;
+    const saved = await save([...domains, host], `${host} added to ${mode === 'allow' ? 'allowed' : 'blocked'} websites.`);
+    if (saved) { $('#search').value = ''; selected = host; render(); }
   }
 });
 $('#remove').addEventListener('click', async () => {

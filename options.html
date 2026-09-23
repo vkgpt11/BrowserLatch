@@ -9,15 +9,15 @@
 </section>
 <section id="settings" hidden>
   <div class="card">
-    <div class="section-heading"><div><h2>How should the list work?</h2><p id="mode-summary" class="hint"></p></div><button id="lock" type="button" class="secondary">Lock now</button></div>
-    <form id="mode-form" class="mode-form"><label for="mode-select">Active mode</label><select id="mode-select"><option value="allow">Allowlist — only listed websites open</option><option value="block">Blocklist — listed websites are blocked</option></select><button id="apply-mode" type="submit">Apply mode</button></form>
-    <p class="hint">Changing mode requires confirmation because it changes what happens to every unlisted website. Each mode remembers its own list.</p>
+    <div class="section-heading"><div><h2>What should this list do?</h2><p id="mode-summary" class="hint"></p></div><button id="lock" type="button" class="secondary">Lock now</button></div>
+    <form id="mode-form" class="mode-form"><label for="mode-select">Website rule</label><select id="mode-select"><option value="allow">Allow only websites on this list</option><option value="block">Block websites on this list</option></select><button id="apply-mode" type="submit">Change rule</button></form>
+    <p class="hint">Changing this rule affects other websites. Your allowed and blocked lists are saved separately.</p>
     <div id="legacy-note" class="notice" hidden><strong>Choose a mode to finish upgrading.</strong><p>Your older setup has both allowed and blocked entries. In Allowlist mode, allowed parent websites stay open while their previously blocked child domains become visible exceptions. Entries that are themselves blocked remain closed. The original entries are kept locally for reference.</p><p id="legacy-counts"></p></div>
   </div>
   <div id="rules-panel" class="card" hidden>
     <div class="section-heading"><div><h2 id="list-title">Allowed websites</h2><p id="list-description" class="hint"></p></div><span id="count" class="count-pill"></span></div>
-    <div id="current-site-box" class="current-site" hidden><div><span class="badge">CURRENT WEBSITE</span><strong id="current-site-domain"></strong><span id="current-site-state" class="hint"></span></div><button id="current-site-action" type="button" class="secondary">Use this website</button></div>
-    <form id="add-form" class="add-form"><div><label for="new-domain">Website domain</label><input id="new-domain" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="youtube.com" required><p class="hint">Enter a domain only. Subdomains are included.</p></div><button id="add" type="submit">Add to list</button></form>
+    <div id="current-site-box" class="current-site" hidden><div><span class="badge">CURRENT WEBSITE</span><strong id="current-site-domain"></strong><span id="current-site-state" class="hint"></span></div><button id="current-site-action" type="button" class="secondary">Add this website</button></div>
+    <form id="add-form" class="add-form"><div><label id="add-label" for="new-domain">Website to allow</label><input id="new-domain" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="youtube.com" required><p class="hint">Enter a website name such as youtube.com. This includes its subdomains.</p></div><button id="add" type="submit">Allow website</button></form>
     <p id="add-preview" class="hint" aria-live="polite"></p>
     <div class="list-heading"><h3>Saved websites</h3><div><label for="search">Find a website</label><input id="search" type="search" placeholder="Search this list" autocomplete="off"></div></div>
     <p id="match-count" class="hint" aria-live="polite"></p>

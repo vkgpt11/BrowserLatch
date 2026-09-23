@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "BrowseLatch: Website Rules",
-  "version": "1.5.7",
-  "description": "Choose Allowlist or Blocklist mode and manage website access with parent-protected settings.",
+  "version": "1.5.8",
+  "description": "Choose which websites can open or be blocked with parent-protected settings.",
   "minimum_chrome_version": "102",
   "permissions": ["declarativeNetRequest", "storage"],
   "host_permissions": ["http://*/*", "https://*/*"],
