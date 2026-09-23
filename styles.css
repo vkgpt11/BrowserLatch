@@ -18,9 +18,9 @@ button:hover{background:#104c3a}.secondary{background:#dfe9e3;color:#173432}.sec
 button:disabled{opacity:.5;cursor:wait}:focus-visible{outline:3px solid #c38425;outline-offset:3px}
 .mode-form,.add-form,.check-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:end;margin-top:20px}
 .mode-form label,.check-form label{grid-column:1/-1;margin:0 0 -8px}.mode-form button,.check-form button{margin:0;height:48px}
-.add-form label{margin-top:0}.add-form button{margin:0;height:48px}
-.add-form .hint{margin:5px 0 0}
-.checkbox-line{display:flex;align-items:center;gap:10px;min-height:48px;margin:0;white-space:nowrap;cursor:pointer}
+.add-form{grid-template-areas:"label label" "input button" "hint .";row-gap:0}
+.add-form>div{display:contents}.add-form label{grid-area:label;margin:0 0 7px}.add-form input{grid-area:input;min-width:0}.add-form button{grid-area:button;margin:0;height:48px}.add-form .hint{grid-area:hint;margin:5px 0 0}
+.checkbox-line{display:flex;align-items:center;gap:10px;min-height:48px;margin:0;min-width:0;cursor:pointer}
 .checkbox-line input{width:20px;height:20px;accent-color:#175e49;flex:none}
 .current-site{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;margin:20px 0;background:#eaf5ed;border:1px solid #cbe2d3;border-radius:12px}
 .current-site[hidden]{display:none}.current-site strong{display:block;font-size:18px;overflow-wrap:anywhere;margin:4px 0}.current-site button{margin:0;flex:none}
@@ -29,7 +29,7 @@ button:disabled{opacity:.5;cursor:wait}:focus-visible{outline:3px solid #c38425;
 .site-list{padding:5px!important;line-height:1.6}
 .site-list option{padding:9px 10px;border-radius:5px;white-space:normal}
 .site-editor{margin-top:18px;padding:18px;border:1px solid #d4dfd7;border-radius:12px;background:#f6faf7}
-.site-editor>div{display:flex;align-items:center;gap:12px;flex-wrap:wrap;overflow-wrap:anywhere}
+.site-editor>div{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.site-editor strong{min-width:0;overflow-wrap:anywhere}
 .site-editor .secondary{margin-top:0}.state-pill{font-size:12px;font-weight:700;color:#0d6240;background:#d8f2e2;padding:5px 9px;border-radius:99px}
 .state-pill.blocked-state{color:#8f372d;background:#fde9e5}
 #status,#auth-status,#change-status{font-size:14px;min-height:23px;margin-bottom:0}
@@ -37,4 +37,4 @@ button:disabled{opacity:.5;cursor:wait}:focus-visible{outline:3px solid #c38425;
 #legacy-backup-list{max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 aside{border-left:3px solid #5d917a;padding:4px 20px}aside p{font-size:14px;margin-bottom:4px}
 .blocked{padding-top:12vh}.blocked button{margin-top:20px}summary{cursor:pointer;font-weight:700}
-@media(max-width:620px){body{padding:28px 16px}.card{padding:20px}.mode-form,.add-form,.check-form{grid-template-columns:1fr}.mode-form button,.add-form button,.check-form button{width:100%}.page-header,.section-heading,.list-heading,.current-site,.feedback-row{align-items:stretch;flex-direction:column}.list-heading>div:last-child{min-width:0}.checkbox-line{min-height:36px}}
+@media(max-width:620px){body{padding:28px 16px}.card{padding:20px}.mode-form,.add-form,.check-form{grid-template-columns:1fr}.add-form{grid-template-areas:"label" "input" "hint" "button";row-gap:0}.add-form button{margin-top:12px}.mode-form button,.add-form button,.check-form button{width:100%}.page-header,.section-heading,.list-heading,.current-site,.feedback-row{align-items:stretch;flex-direction:column}.section-heading .count-pill,.page-header .access-status{align-self:flex-start}.list-heading>div:last-child{min-width:0}.checkbox-line{min-height:36px}}

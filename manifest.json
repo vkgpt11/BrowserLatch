@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BrowseLatch: Website Rules",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "description": "Choose Allowlist or Blocklist mode and manage website access with parent-protected settings.",
   "minimum_chrome_version": "102",
   "permissions": ["declarativeNetRequest", "storage"],
