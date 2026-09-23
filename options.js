@@ -19,7 +19,7 @@ const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${dom
 
 function updateLockStatus() {
   const remaining = Math.max(0, expiresAt - Date.now());
-  if (!settings.hidden && !remaining) { showLocked(true, 'Parent access expired. Enter the password again.'); return; }
+  if (!settings.hidden && !remaining) { showLocked(true, 'Settings locked after five minutes. Enter your parent password to continue.'); return; }
   $('#access-status').textContent = `Parent access · locks in ${Math.ceil(remaining / 60000)} min`;
 }
 
@@ -59,13 +59,17 @@ function showLocked(configured, message = '') {
   $('#current-site-domain').textContent = '';
   $('#selected-domain').textContent = '';
   $('#change-form').reset();
+  $('#password').value = '';
+  $('#show-password').checked = false;
+  $('#password').type = 'password';
   $('#undo').hidden = true;
   settings.hidden = true;
   authCard.hidden = false;
   $('#access-status').hidden = true;
   $('#setup-panel').hidden = configured;
   $('#unlock-panel').hidden = !configured;
-  $('#auth-status').textContent = message || (configured ? 'Settings are locked.' : 'Create a password before configuring websites.');
+  $('#auth-status').textContent = configured ? (!message || /^Settings are locked\.?$/i.test(message) ? 'Settings are locked. Enter your parent password to continue.' : message) : '';
+  $('#setup-status').textContent = configured ? '' : message || '';
   (configured ? $('#password') : $('#new-password')).focus();
 }
 
@@ -219,8 +223,8 @@ request({type: 'status'}).then(result => result.unlocked ? showSettings() : show
 
 document.addEventListener('visibilitychange', async () => {
   if (document.hidden || settings.hidden) return;
-  try { if (!(await request({type: 'status'})).unlocked) showLocked(true, 'Parent access expired. Enter the password again.'); }
-  catch { showLocked(true, 'Could not confirm parent access. Enter the password again.'); }
+  try { if (!(await request({type: 'status'})).unlocked) showLocked(true, 'Settings are locked. Enter your parent password to continue.'); }
+  catch { showLocked(true, 'Could not confirm access. Enter your parent password to continue.'); }
 });
 
 chrome.storage?.onChanged?.addListener((changes, areaName) => {
@@ -241,11 +245,12 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
 
 $('#setup-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if ($('#new-password').value !== $('#confirm-password').value) { $('#auth-status').textContent = 'Passwords do not match.'; return; }
+  if ($('#new-password').value !== $('#confirm-password').value) { $('#setup-status').textContent = 'Passwords do not match.'; return; }
   try { await request({type: 'setup', password: $('#new-password').value}); event.target.reset(); await showSettings(); }
-  catch (error) { $('#auth-status').textContent = error.message; }
+  catch (error) { $('#setup-status').textContent = error.message; }
 });
 
+$('#show-password').addEventListener('change', () => { $('#password').type = $('#show-password').checked ? 'text' : 'password'; });
 $('#unlock-form').addEventListener('submit', async event => {
   event.preventDefault();
   try { await request({type: 'unlock', password: $('#password').value}); event.target.reset(); await showSettings(); }

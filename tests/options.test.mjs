@@ -240,3 +240,21 @@ test('locking another settings tab hides this tab immediately', async () => {
   assert.equal(page.$('#sites').options.length, 0);
   page.dom.window.close();
 });
+
+test('locked settings explain the password step and can reveal or hide the password', async () => {
+  const page = await createPage({domains: ['youtube.com']});
+  const {$, fire} = page;
+  page.triggerLock();
+  assert.equal($('#unlock-panel').hidden, false);
+  assert.match($('#auth-status').textContent, /Enter your parent password/);
+  assert.equal($('#unlock-form').previousElementSibling, $('#auth-status'));
+  assert.equal($('label[for="password"]').textContent, 'Parent password');
+  assert.equal($('#password').type, 'password');
+  $('#show-password').checked = true;
+  fire('#show-password', 'change');
+  assert.equal($('#password').type, 'text');
+  $('#show-password').checked = false;
+  fire('#show-password', 'change');
+  assert.equal($('#password').type, 'password');
+  page.dom.window.close();
+});
