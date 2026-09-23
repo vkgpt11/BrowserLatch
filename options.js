@@ -15,6 +15,8 @@ let undoDomains = null;
 let undoExceptions = null;
 let busy = false;
 
+function hideUndo() { $('#undo').hidden = true; $('#undo-exception').hidden = true; }
+
 const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${domain}`);
 
 function updateLockStatus() {
@@ -54,7 +56,10 @@ function showLocked(configured, message = '') {
   $('#sites').replaceChildren();
   $('#exceptions').replaceChildren();
   $('#supporting-resources').checked = true;
+  $('#status').textContent = '';
   $('#check-result').textContent = '';
+  $('#exception-status').textContent = '';
+  $('#network-status').textContent = '';
   $('#legacy-backup-list').textContent = '';
   $('#current-site-domain').textContent = '';
   $('#selected-domain').textContent = '';
@@ -62,7 +67,7 @@ function showLocked(configured, message = '') {
   $('#password').value = '';
   $('#show-password').checked = false;
   $('#password').type = 'password';
-  $('#undo').hidden = true;
+  hideUndo();
   settings.hidden = true;
   authCard.hidden = false;
   $('#access-status').hidden = true;
@@ -108,19 +113,16 @@ function render() {
   $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources;
   const exceptionList = $('#exceptions');
   exceptionList.replaceChildren();
-  exceptionList.size = Math.min(9, Math.max(3, exceptions.length));
+  exceptionList.hidden = !exceptions.length;
+  $('#exceptions-empty').hidden = Boolean(exceptions.length);
+  $('#remove-exception').hidden = !exceptions.length;
+  exceptionList.size = Math.min(9, Math.max(2, exceptions.length + 1));
   for (const domain of exceptions) {
     const option = document.createElement('option');
     option.value = domain;
     option.textContent = domain;
     option.selected = domain === selectedException;
     exceptionList.append(option);
-  }
-  if (!exceptions.length) {
-    const empty = document.createElement('option');
-    empty.textContent = 'No blocked exceptions';
-    empty.disabled = true;
-    exceptionList.append(empty);
   }
   if (!exceptions.includes(selectedException)) selectedException = '';
   exceptionList.value = selectedException;
@@ -176,7 +178,10 @@ function applyPolicy(result) {
   revision = result.revision;
   undoDomains = null;
   undoExceptions = null;
-  $('#undo').hidden = true;
+  hideUndo();
+  $('#status').textContent = '';
+  $('#exception-status').textContent = '';
+  $('#network-status').textContent = '';
   currentSite = result.currentSite || '';
   selected = '';
   selectedException = '';
@@ -192,7 +197,7 @@ function applyPolicy(result) {
 
 async function showSettings() { applyPolicy(await request({type: 'read'})); }
 
-async function save(next, message, nextExceptions = exceptions, previous = domains, previousExceptions = exceptions) {
+async function save(next, message, nextExceptions = exceptions, previous = domains, previousExceptions = exceptions, feedback = '#status') {
   if (busy) return false;
   busy = true;
   for (const control of settings.querySelectorAll('button,input,select')) control.disabled = true;
@@ -204,15 +209,18 @@ async function save(next, message, nextExceptions = exceptions, previous = domai
     revision = result.revision;
     undoDomains = [...previous];
     undoExceptions = [...previousExceptions];
-    $('#undo').hidden = false;
+    hideUndo();
+    $(feedback === '#exception-status' ? '#undo-exception' : '#undo').hidden = false;
     render();
-    $('#status').textContent = `${message} Reload any open website tabs to see the change.`;
+    $('#status').textContent = '';
+    $('#exception-status').textContent = '';
+    $(feedback).textContent = `${message} Reload any open website tabs to see the change.`;
     setExpiry(result.expiresAt);
     return true;
   } catch (error) {
     if (/locked/i.test(error.message)) showLocked(true, error.message);
     else {
-      $('#status').textContent = `Not saved: ${error.message}`;
+      $(feedback).textContent = `Not saved: ${error.message}`;
       if (/another tab/i.test(error.message)) await showSettings();
       render();
     }
@@ -238,7 +246,7 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
   if (areaName === 'session' && changes.accessLockVersion?.newValue) { if (!settings.hidden) showLocked(true); return; }
   if (areaName !== 'session' || !changes.pendingSite?.newValue || settings.hidden) return;
   request({type: 'read'}).then(result => {
-    if (result.revision !== revision) { undoDomains = null; undoExceptions = null; $('#undo').hidden = true; }
+    if (result.revision !== revision) { undoDomains = null; undoExceptions = null; hideUndo(); }
     currentSite = result.currentSite || '';
     domains = [...result.domains];
     exceptions = [...(result.exceptions ?? [])];
@@ -276,7 +284,7 @@ $('#mode-form').addEventListener('submit', async event => {
     applyPolicy(result);
     undoDomains = null;
     undoExceptions = null;
-    $('#undo').hidden = true;
+    hideUndo();
     $('#status').textContent = `Website rule changed. Reload any open website tabs to see the change. ${result.migrationNotice || ''}`;
   } catch (error) {
     if (/locked/i.test(error.message)) showLocked(true, error.message);
@@ -328,8 +336,8 @@ $('#remove').addEventListener('click', async () => {
 $('#exception-form').addEventListener('submit', async event => {
   event.preventDefault();
   const input = $('#exception-domain').value.trim();
-  if (exceptions.includes(input.toLowerCase())) { $('#status').textContent = `${input} is already blocked as an exception.`; return; }
-  const saved = await save(domains, `${input} blocked under its allowed parent.`, [...exceptions, input]);
+  if (exceptions.includes(input.toLowerCase())) { $('#exception-status').textContent = `${input} is already blocked.`; return; }
+  const saved = await save(domains, `${input} is now blocked.`, [...exceptions, input], domains, exceptions, '#exception-status');
   if (saved) {
     $('#exception-domain').value = '';
     try { selectedException = new URL(`https://${input}`).hostname.toLowerCase(); } catch { selectedException = ''; }
@@ -340,9 +348,13 @@ $('#exceptions').addEventListener('change', () => { selectedException = $('#exce
 $('#remove-exception').addEventListener('click', async () => {
   const domain = selectedException;
   selectedException = '';
-  if (!await save(domains, `${domain} exception removed.`, exceptions.filter(item => item !== domain))) { selectedException = domain; render(); }
+  if (!await save(domains, `${domain} is no longer blocked as part of an allowed website.`, exceptions.filter(item => item !== domain), domains, exceptions, '#exception-status')) { selectedException = domain; render(); }
 });
-$('#supporting-resources').addEventListener('change', () => { $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources; });
+$('#supporting-resources').addEventListener('change', () => {
+  const changed = $('#supporting-resources').checked !== supportingResources;
+  $('#apply-network').disabled = !changed;
+  $('#network-status').textContent = changed ? 'Select Save change to apply this setting.' : '';
+});
 $('#network-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (busy || mode !== 'allow' || $('#supporting-resources').checked === supportingResources) return;
@@ -354,13 +366,13 @@ $('#network-form').addEventListener('submit', async event => {
     revision = result.revision;
     undoDomains = null;
     undoExceptions = null;
-    $('#undo').hidden = true;
-    $('#status').textContent = `${supportingResources ? 'Supporting content allowed' : 'Unlisted supporting content blocked'}. Reload open websites to apply changes.`;
+    hideUndo();
+    $('#network-status').textContent = `${supportingResources ? 'Extra content is allowed' : 'Extra content from other websites is blocked'}. Reload any open website tabs to see the change.`;
     setExpiry(result.expiresAt);
   } catch (error) {
     if (/locked/i.test(error.message)) showLocked(true, error.message);
     else {
-      $('#status').textContent = `Not saved: ${error.message}`;
+      $('#network-status').textContent = `Not saved: ${error.message}`;
       if (/another tab/i.test(error.message)) await showSettings();
     }
   } finally {
@@ -369,12 +381,14 @@ $('#network-form').addEventListener('submit', async event => {
     render();
   }
 });
-$('#undo').addEventListener('click', async () => {
+async function undoLastChange(feedback) {
   if (!undoDomains) return;
   const previous = [...undoDomains];
   const previousExceptions = [...undoExceptions];
-  if (await save(previous, 'Last change undone.', previousExceptions)) { undoDomains = null; undoExceptions = null; $('#undo').hidden = true; }
-});
+  if (await save(previous, 'Last change undone.', previousExceptions, domains, exceptions, feedback)) { undoDomains = null; undoExceptions = null; hideUndo(); }
+}
+$('#undo').addEventListener('click', () => undoLastChange('#status'));
+$('#undo-exception').addEventListener('click', () => undoLastChange('#exception-status'));
 $('#lock').addEventListener('click', async () => {
   try { await request({type: 'lock'}); showLocked(true); }
   catch (error) { $('#mode-summary').textContent = error.message; }

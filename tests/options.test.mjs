@@ -150,7 +150,9 @@ test('parent can inspect, add, remove, and undo blocked child exceptions', async
   fire('#remove-exception', 'click');
   await settle();
   assert.deepEqual(state.exceptions, ['kids.example.com']);
-  fire('#undo', 'click');
+  assert.equal($('#undo-exception').hidden, false);
+  assert.match($('#exception-status').textContent, /no longer blocked/);
+  fire('#undo-exception', 'click');
   await settle();
   assert.deepEqual(state.exceptions, ['kids.example.com', 'video.example.com']);
   $('#sites').value = 'example.com';
@@ -166,6 +168,28 @@ test('parent can inspect, add, remove, and undo blocked child exceptions', async
   page.dom.window.close();
 });
 
+test('empty blocked-parts list uses a message and reveals controls only after an entry is added', async () => {
+  const page = await createPage({domains: ['example.com']});
+  const {$, fire, state} = page;
+  assert.equal($('#exceptions-empty').hidden, false);
+  assert.equal($('#exceptions').hidden, true);
+  assert.equal($('#remove-exception').hidden, true);
+  $('#exception-domain').value = 'kids.example.com';
+  fire('#exception-form', 'submit');
+  await settle();
+  assert.deepEqual(state.exceptions, ['kids.example.com']);
+  assert.equal($('#exceptions-empty').hidden, true);
+  assert.equal($('#exceptions').hidden, false);
+  assert.equal($('#remove-exception').hidden, false);
+  assert.match($('#exception-status').textContent, /kids.example.com is now blocked/);
+  assert.equal($('#undo-exception').hidden, false);
+  fire('#undo-exception', 'click');
+  await settle();
+  assert.deepEqual(state.exceptions, []);
+  assert.equal($('#exceptions-empty').hidden, false);
+  page.dom.window.close();
+});
+
 test('parent can switch supporting requests between compatibility and strict behavior', async () => {
   const page = await createPage({domains: ['youtube.com']});
   const {$, fire, state} = page;
@@ -175,11 +199,12 @@ test('parent can switch supporting requests between compatibility and strict beh
   $('#supporting-resources').checked = false;
   fire('#supporting-resources', 'change');
   assert.equal($('#apply-network').disabled, false);
+  assert.match($('#network-status').textContent, /Save change/);
   fire('#network-form', 'submit');
   await settle();
   assert.equal(state.supportingResources, false);
   assert.equal($('#apply-network').disabled, true);
-  assert.match($('#status').textContent, /Unlisted supporting content blocked/);
+  assert.match($('#network-status').textContent, /Extra content from other websites is blocked/);
   $('#mode-select').value = 'block';
   fire('#mode-form', 'submit');
   await settle();
