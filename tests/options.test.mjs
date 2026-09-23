@@ -73,6 +73,8 @@ test('one active list can be searched and checked against effective access', asy
 test('add, remove, and undo keep the active list in sync', async () => {
   const page = await createPage({domains: ['example.com']});
   const {$, fire, state} = page;
+  assert.equal($('#remove').closest('.site-list-box').querySelector('#sites'), $('#sites'));
+  assert.equal($('#remove').disabled, true);
   $('#new-domain').value = 'youtube.com';
   fire('#add-form', 'submit');
   await settle();
@@ -80,9 +82,12 @@ test('add, remove, and undo keep the active list in sync', async () => {
   assert.equal($('#undo').hidden, false);
   $('#sites').value = 'youtube.com';
   fire('#sites', 'change');
+  assert.equal($('#remove').disabled, false);
+  assert.equal($('#remove').getAttribute('aria-label'), 'Remove youtube.com from allowed websites');
   fire('#remove', 'click');
   await settle();
   assert.deepEqual(state.domains, ['example.com']);
+  assert.equal($('#remove').disabled, true);
   fire('#undo', 'click');
   await settle();
   assert.deepEqual(state.domains, ['example.com', 'youtube.com']);

@@ -63,7 +63,6 @@ function showLocked(configured, message = '') {
   $('#network-status').textContent = '';
   $('#legacy-backup-list').textContent = '';
   $('#current-site-domain').textContent = '';
-  $('#selected-domain').textContent = '';
   $('#change-form').reset();
   $('#password').value = '';
   $('#show-password').checked = false;
@@ -163,13 +162,8 @@ function render() {
   list.value = selected;
   $('#match-count').hidden = !query;
   $('#match-count').textContent = query ? `${entries.length} ${entries.length === 1 ? 'result' : 'results'}` : '';
-  $('#editor').hidden = !selected;
-  if (selected) {
-    $('#selected-domain').textContent = selected;
-    $('#selected-state').textContent = mode === 'allow' ? 'Allowed' : 'Blocked';
-    $('#selected-state').classList.toggle('blocked-state', mode === 'block');
-    $('#selected-effect').textContent = `Removing this entry will ${mode === 'allow' ? 'block' : 'allow'} it unless another listed parent domain still applies.`;
-  }
+  $('#remove').disabled = !selected;
+  $('#remove').setAttribute('aria-label', selected ? `Remove ${selected} from ${mode === 'allow' ? 'allowed' : 'blocked'} websites` : 'Remove selected website');
   $('#current-site-box').hidden = !currentSite;
   if (currentSite) {
     const exception = mode === 'allow' ? exceptions.find(domain => matchesDomain(currentSite, domain)) : '';
@@ -254,6 +248,7 @@ async function save(next, message, nextExceptions = exceptions, previous = domai
     busy = false;
     for (const control of settings.querySelectorAll('button,input,select')) control.disabled = false;
     $('#apply-mode').disabled = mode !== 'legacy' && $('#mode-select').value === mode;
+    $('#remove').disabled = !selected;
     $('#remove-exception').disabled = !selectedException;
     $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources;
   }
