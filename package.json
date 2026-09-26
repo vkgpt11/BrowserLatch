@@ -1,10 +1,10 @@
 {
   "name": "browselatch",
-  "version": "1.5.11",
+  "version": "1.6.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/policy.test.mjs tests/options.test.mjs tests/blocked.test.mjs",
+    "test": "node --test tests/policy.test.mjs tests/options.test.mjs tests/blocked.test.mjs tests/i18n.test.mjs",
     "icons": "node scripts/generate-icons.mjs"
   },
   "devDependencies": {

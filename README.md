@@ -29,6 +29,7 @@ If using the ZIP, extract it first and select the extracted folder containing ma
 - An empty Allowlist blocks all websites; an empty Blocklist allows all websites. Rules work without a running background worker, persist across restarts, and update atomically. Failed saves retain the previous rules.
 - If an older version contains both allowed and blocked entries, settings ask you to choose one active mode. The old lists are retained locally. When Allowlist is chosen, an allowed parent stays open and its previously blocked child becomes a blocked exception. An allowed entry that is itself blocked, or falls beneath a blocked parent, stays closed.
 - The password is salted and processed locally with PBKDF2-SHA-256. Settings hide after five minutes without parent activity, and repeated incorrect attempts trigger increasing delays.
+- The settings and blocked page have a language selector for English, Hindi, Spanish, French, Portuguese, Arabic, Bengali, Russian, Simplified Chinese, and Indonesian. The selected language is stored locally and shared between regular and private windows; changing it does not change website rules or the parent password. Arabic uses a right-to-left layout. An unsupported browser language falls back to English.
 - There is no password recovery. Uninstalling and reinstalling resets the password and allowlist.
 - No analytics, external services, sync, or collection of browsing history. Rules are stored locally by Edge.
 

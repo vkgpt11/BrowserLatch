@@ -1,4 +1,5 @@
 const $ = selector => document.querySelector(selector);
+const uiText = value => window.BrowseLatchI18n?.translated(value).trim() ?? value;
 const settings = $('#settings');
 const authCard = $('#auth-card');
 let mode = 'allow';
@@ -299,7 +300,7 @@ $('#mode-form').addEventListener('submit', async event => {
   const nextMode = $('#mode-select').value;
   if (nextMode === mode) return;
   const warning = nextMode === 'block' ? 'Block websites on this list? All other websites will be allowed.' : 'Allow only websites on this list? All other websites will be blocked.';
-  if (!window.confirm(`${warning}\n\nYour allowed and blocked lists are saved separately.`)) { $('#mode-select').value = mode === 'legacy' ? 'allow' : mode; return; }
+  if (!window.confirm(`${uiText(warning)}\n\n${uiText('Your allowed and blocked lists are saved separately.')}`)) { $('#mode-select').value = mode === 'legacy' ? 'allow' : mode; return; }
   try {
     const result = await request({type: 'setMode', mode: nextMode, revision});
     applyPolicy(result);
