@@ -10,15 +10,15 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 const openWindows = new Set();
 test.afterEach(() => { for (const window of openWindows) window.close(); openWindows.clear(); });
 
-async function createPage({mode = 'allow', domains = [], exceptions = [], supportingResources = true, currentSite = '', legacyAllowed = [], legacyBlocked = [], expiryOffsetMs = 300000} = {}) {
+async function createPage({mode = 'allow', domains = [], exceptions = [], supportingResources = true, currentSite = '', requestedUrl = '', legacyAllowed = [], legacyBlocked = [], expiryOffsetMs = 300000} = {}) {
   const dom = new JSDOM(html, {url: 'https://extension.test/options.html', runScripts: 'outside-only'});
   openWindows.add(dom.window);
-  const state = {mode, domains, exceptions, supportingResources, currentSite, legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, expiryOffsetMs};
+  const state = {mode, domains, exceptions, supportingResources, currentSite, requestedUrl, openTabUrl: 'chrome-extension://unit-test/blocked.html?site=' + currentSite, navigated: [], legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, expiryOffsetMs};
   let onStorageChanged;
   dom.window.confirm = () => true;
-  dom.window.chrome = {storage: {onChanged: {addListener(fn) {onStorageChanged = fn;}}}, runtime: {sendMessage: async message => {
+  dom.window.chrome = {storage: {onChanged: {addListener(fn) {onStorageChanged = fn;}}}, tabs: {get: async () => ({url: state.openTabUrl}), update: async (id, value) => {state.navigated.push({id, url: value.url});}}, runtime: {getURL: path => `chrome-extension://unit-test/${path}`, sendMessage: async message => {
     if (message.type === 'status') return {ok: true, configured: true, unlocked: state.unlocked, expiresAt: Date.now() + state.expiryOffsetMs};
-    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: state.currentSite, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'lock') {state.unlocked = false; return {ok: true};}
     if (!state.unlocked) return {ok: false, error: 'Settings are locked.'};
     if (message.revision !== String(state.revision)) return {ok: false, error: 'The list changed in another tab. Reload settings before saving.'};
@@ -328,6 +328,38 @@ test('current-site action adds an unlisted website and can be undone', async () 
   await settle();
   assert.deepEqual(state.domains, ['youtube.com']);
   page.dom.window.close();
+});
+
+test('allowing a blocked website reopens its exact page after saving', async () => {
+  const page = await createPage({currentSite: 'www.youtube.com', requestedUrl: 'https://www.youtube.com/watch?v=sample&t=2'});
+  assert.equal(page.$('#current-site-action').textContent, 'Allow and open website');
+  page.fire('#current-site-action', 'click');
+  await settle();
+  assert.deepEqual(page.state.domains, ['www.youtube.com']);
+  assert.deepEqual(page.state.navigated, [{id: 42, url: 'https://www.youtube.com/watch?v=sample&t=2'}]);
+  assert.match(page.$('#status').textContent, /Opening the requested website/);
+});
+
+test('failed saves and unrelated rules do not reopen the blocked tab', async () => {
+  const page = await createPage({currentSite: 'www.youtube.com', requestedUrl: 'https://www.youtube.com/watch?v=sample'});
+  page.state.failSave = true;
+  page.fire('#current-site-action', 'click');
+  await settle();
+  assert.deepEqual(page.state.navigated, []);
+  page.state.failSave = false;
+  page.$('#new-domain').value = 'example.com';
+  page.fire('#add-form', 'submit');
+  await settle();
+  assert.deepEqual(page.state.navigated, []);
+});
+
+test('removing a blocked subdomain reopens its denied page', async () => {
+  const page = await createPage({domains: ['example.com'], exceptions: ['kids.example.com'], currentSite: 'games.kids.example.com', requestedUrl: 'https://games.kids.example.com/game?level=2'});
+  page.$('#exceptions').value = 'kids.example.com';
+  page.fire('#exceptions', 'change');
+  page.fire('#remove-exception', 'click');
+  await settle();
+  assert.deepEqual(page.state.navigated, [{id: 42, url: 'https://games.kids.example.com/game?level=2'}]);
 });
 
 test('current-site action blocks a website in block mode', async () => {

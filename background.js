@@ -159,14 +159,25 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       policy = policyFromRules(rules);
     }
     let currentSite = '';
+    let requestedUrl = '';
+    let requestedTabId;
     if (message.type === 'read') {
       const {pendingSite} = await chrome.storage.session.get('pendingSite');
       await chrome.storage.session.remove('pendingSite');
-      if (pendingSite && now - pendingSite.capturedAt < UNLOCK_MS) currentSite = pendingSite.host;
+      if (pendingSite && now - pendingSite.capturedAt < UNLOCK_MS) {
+        currentSite = validBlockedHost(pendingSite.host);
+        try {
+          const url = new URL(pendingSite.requestedUrl);
+          if (currentSite && ['http:', 'https:'].includes(url.protocol) && url.hostname.toLowerCase() === currentSite && url.href.length <= 8192 && Number.isSafeInteger(pendingSite.tabId) && pendingSite.tabId >= 0) {
+            requestedUrl = url.href;
+            requestedTabId = pendingSite.tabId;
+          }
+        } catch {}
+      }
     }
     const savedLists = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
     unlockedUntil = Date.now() + UNLOCK_MS;
-    return {ok: true, configured: true, unlocked: true, expiresAt: unlockedUntil, ...policy, supportingResources: supporting, revision: revisionOf(rules, supporting), currentSite, migrationNotice, legacyAllowedBackup: savedLists.legacyAllowedBackup ?? []};
+    return {ok: true, configured: true, unlocked: true, expiresAt: unlockedUntil, ...policy, supportingResources: supporting, revision: revisionOf(rules, supporting), currentSite, requestedUrl, requestedTabId, migrationNotice, legacyAllowedBackup: savedLists.legacyAllowedBackup ?? []};
   });
   queue = job.catch(() => {});
   job.then(respond, error => respond({ok: false, error: error.message}));

@@ -10,6 +10,7 @@ let revision = '';
 let selected = '';
 let selectedException = '';
 let currentSite = '';
+let pendingReturn = null;
 let expiresAt = 0;
 let lockTimer;
 let undoDomains = null;
@@ -20,6 +21,36 @@ function hideUndo() { $('#undo').hidden = true; $('#undo-exception').hidden = tr
 const isAccessLockedError = message => /^Settings are locked\.|^Too many attempts\. Settings are temporarily locked\./i.test(message);
 
 const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${domain}`);
+
+function isAllowed(host) {
+  const listed = domains.some(domain => matchesDomain(host, domain));
+  return mode === 'allow' ? listed && !exceptions.some(domain => matchesDomain(host, domain)) : mode === 'block' && !listed;
+}
+
+function receiveCurrentSite(result) {
+  currentSite = result.currentSite || '';
+  pendingReturn = result.requestedUrl && Number.isSafeInteger(result.requestedTabId)
+    ? {url: result.requestedUrl, tabId: result.requestedTabId} : null;
+}
+
+async function openRequestedSite(feedback = '#status') {
+  if (!pendingReturn || !currentSite || !isAllowed(currentSite)) return;
+  const {url, tabId} = pendingReturn;
+  let parsed;
+  try { parsed = new URL(url); } catch { return; }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.hostname.toLowerCase() !== currentSite) return;
+  pendingReturn = null;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const shown = new URL(tab.url);
+    const blocked = new URL(chrome.runtime.getURL('blocked.html'));
+    if (shown.origin !== blocked.origin || shown.pathname !== blocked.pathname) throw new Error('Blocked tab was closed or changed.');
+    await chrome.tabs.update(tabId, {url: parsed.href});
+    $(feedback).textContent = 'Saved. Opening the requested website.';
+  } catch {
+    $(feedback).textContent = 'Saved. Return to the website and reload it.';
+  }
+}
 
 function updateLockStatus() {
   const remaining = Math.max(0, expiresAt - Date.now());
@@ -53,6 +84,7 @@ function showLocked(configured, message = '') {
   undoDomains = null;
   undoExceptions = null;
   currentSite = '';
+  pendingReturn = null;
   selected = '';
   selectedException = '';
   $('#sites').replaceChildren();
@@ -171,7 +203,7 @@ function render() {
     const listedParent = domains.filter(domain => matchesDomain(currentSite, domain)).sort((a, b) => b.length - a.length)[0];
     $('#current-site-domain').textContent = currentSite;
     $('#current-site-state').textContent = explain(currentSite);
-    $('#current-site-action').textContent = exception ? 'View blocked subdomain' : listedParent ? 'View saved rule' : mode === 'allow' ? 'Allow this website' : 'Block this website';
+    $('#current-site-action').textContent = exception ? 'View blocked subdomain' : listedParent ? 'View saved rule' : mode === 'allow' ? pendingReturn ? 'Allow and open website' : 'Allow this website' : 'Block this website';
     $('#current-site-action').classList.toggle('secondary', Boolean(exception || listedParent));
   }
   updatePreview();
@@ -191,7 +223,7 @@ function applyPolicy(result) {
   $('#status').textContent = '';
   $('#exception-status').textContent = '';
   $('#network-status').textContent = '';
-  currentSite = result.currentSite || '';
+  receiveCurrentSite(result);
   selected = '';
   selectedException = '';
   if (mode === 'legacy') $('#legacy-counts').textContent = `${result.legacyAllowed.length} previously allowed · ${result.legacyBlocked.length} previously blocked`;
@@ -240,6 +272,7 @@ async function save(next, message, nextExceptions = exceptions, previous = domai
     $(feedback).textContent = `${message} Reload any open website tabs to see the change.`;
     refreshCheckResult();
     setExpiry(result.expiresAt);
+    await openRequestedSite(feedback);
     return true;
   } catch (error) {
     await reportSaveError(error, feedback);
@@ -268,7 +301,7 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
   if (areaName !== 'session' || !changes.pendingSite?.newValue || settings.hidden) return;
   request({type: 'read'}).then(result => {
     if (result.revision !== revision) { undoDomains = null; undoExceptions = null; hideUndo(); }
-    currentSite = result.currentSite || '';
+    receiveCurrentSite(result);
     domains = [...result.domains];
     exceptions = [...(result.exceptions ?? [])];
     supportingResources = result.supportingResources ?? true;
@@ -303,11 +336,17 @@ $('#mode-form').addEventListener('submit', async event => {
   if (!window.confirm(`${uiText(warning)}\n\n${uiText('Your allowed and blocked lists are saved separately.')}`)) { $('#mode-select').value = mode === 'legacy' ? 'allow' : mode; return; }
   try {
     const result = await request({type: 'setMode', mode: nextMode, revision});
+    const site = currentSite;
+    const returnTo = pendingReturn;
     applyPolicy(result);
+    currentSite = site;
+    pendingReturn = returnTo;
+    render();
     undoDomains = null;
     undoExceptions = null;
     hideUndo();
     $('#status').textContent = `Website rule changed. Reload any open website tabs to see the change. ${result.migrationNotice || ''}`;
+    await openRequestedSite();
   } catch (error) {
     if (isAccessLockedError(error.message)) showLocked(true, error.message);
     else $('#mode-summary').textContent = `Mode not changed: ${error.message}`;

@@ -61,7 +61,7 @@ try {
     deniedUrl = pages.find(page => page.id === deniedTab.id)?.url ?? '';
     if (deniedUrl.includes('/blocked.html')) break;
   }
-  assert.match(deniedUrl, /^chrome-extension:\/\/[^/]+\/blocked\.html\?site=youtube\.com$/);
+  assert.match(deniedUrl, /^chrome-extension:\/\/[^/]+\/blocked\.html\?site=youtube\.com(?:#https:\/\/youtube\.com\/)?$/);
   await call('Page.reload');
   await new Promise(resolve => setTimeout(resolve, 500));
   assert.equal(await evaluate("document.querySelector('#list-title').textContent"), 'Blocked websites');
@@ -98,5 +98,41 @@ try {
   state = await message({type: 'save', domains: 'example.com\nsignin.test', exceptions: 'kids.example.com', revision: state.revision});
   assert.equal(state.ok, true, JSON.stringify(state));
   assert.equal((await outcome('https://signin.test/', 'sub_frame', 'https://www.example.com')).matchedRules[0]?.ruleId, 100);
-  console.log('Edge DNR smoke checks passed: both list modes, denied hostname redirect, blocked child exception, and strict supporting requests.');
+  const requestedUrl = 'https://www.example.net/guardrail?value=sample&t=2';
+  const returnTab = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(requestedUrl)}`, {method: 'PUT'})).json();
+  let blockedTarget;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    blockedTarget = pages.find(page => page.id === returnTab.id);
+    if (blockedTarget?.url.includes('/blocked.html')) break;
+  }
+  assert.ok(blockedTarget?.url.includes('/blocked.html'), 'The requested page should be blocked');
+  const blockedSocket = new WebSocket(blockedTarget.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {blockedSocket.addEventListener('open', resolve, {once: true}); blockedSocket.addEventListener('error', reject, {once: true});});
+  const clicked = new Promise((resolve, reject) => {
+    blockedSocket.addEventListener('message', event => {
+      const response = JSON.parse(event.data);
+      if (response.id !== 1) return;
+      response.error ? reject(new Error(response.error.message)) : resolve(response.result);
+    });
+  });
+  blockedSocket.send(JSON.stringify({id: 1, method: 'Runtime.evaluate', params: {expression: "document.querySelector('#manage').click()", returnByValue: true}}));
+  await clicked;
+  blockedSocket.close();
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    if (await evaluate("document.querySelector('#current-site-domain').textContent") === 'www.example.net') break;
+  }
+  assert.equal(await evaluate("document.querySelector('#current-site-domain').textContent"), 'www.example.net');
+  await evaluate("document.querySelector('#current-site-action').click()");
+  let returnedUrl = '';
+  for (let attempt = 0; attempt < 50; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    returnedUrl = pages.find(page => page.id === returnTab.id)?.url ?? '';
+    if (returnedUrl === requestedUrl) break;
+  }
+  assert.equal(returnedUrl, requestedUrl, 'Allowing the site should reopen its exact page');
+  console.log('Edge DNR smoke checks passed: both list modes, denied hostname redirect, blocked child exception, strict supporting requests, and return after allowing.');
 } finally {socket.close();}

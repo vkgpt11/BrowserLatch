@@ -28,7 +28,10 @@ export function buildRules(domains, mode = 'allow', blockedPageUrl, exceptions =
     'websocket', 'webtransport', 'webbundle', 'other'];
   if (!/^chrome-extension:\/\/[^/]+\/blocked\.html$/.test(blockedPageUrl ?? '')) throw new Error('A local blocked-page URL is required.');
   const captureHost = '^https?://([^/:?#]+)(:[0-9]+)?([/?#].*)?$';
-  const redirect = {regexSubstitution: `${blockedPageUrl}?site=\\1`};
+  // Keep the complete denied address in the fragment so the parent can return
+  // to its path and query after allowing it. The blocked page removes it from
+  // its visible address as soon as it loads.
+  const redirect = {regexSubstitution: `${blockedPageUrl}?site=\\1#\\0`};
   const rules = [{id: 105, priority: 3, action: {type: 'redirect', redirect},
     condition: {regexFilter: captureHost, resourceTypes: ['main_frame']}}];
   if (!['allow', 'block'].includes(mode)) throw new Error('Choose Allowlist or Blocklist mode.');

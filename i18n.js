@@ -653,6 +653,21 @@
   for (const [code, values] of Object.entries(confirms)) {
     Object.assign(translations[code], Object.fromEntries(confirmKeys.map((key, index) => [key, values[index]])));
   }
+  const returnKeys = ['Allow and open website', 'Saved. Opening the requested website.', 'Saved. Return to the website and reload it.'];
+  const returnMessages = {
+    hi: ['अनुमति दें और वेबसाइट खोलें', 'सहेज लिया गया। अनुरोधित वेबसाइट खुल रही है।', 'सहेज लिया गया। वेबसाइट पर लौटें और उसे फिर लोड करें।'],
+    es: ['Permitir y abrir el sitio', 'Guardado. Abriendo el sitio web solicitado.', 'Guardado. Vuelve al sitio web y recárgalo.'],
+    fr: ['Autoriser et ouvrir le site', 'Enregistré. Ouverture du site demandé.', 'Enregistré. Revenez au site et rechargez-le.'],
+    pt: ['Permitir e abrir o site', 'Salvo. Abrindo o site solicitado.', 'Salvo. Volte ao site e recarregue a página.'],
+    ar: ['السماح بالموقع وفتحه', 'تم الحفظ. جارٍ فتح الموقع المطلوب.', 'تم الحفظ. عُد إلى الموقع وأعد تحميله.'],
+    bn: ['অনুমতি দিন এবং ওয়েবসাইট খুলুন', 'সংরক্ষিত হয়েছে। অনুরোধ করা ওয়েবসাইট খোলা হচ্ছে।', 'সংরক্ষিত হয়েছে। ওয়েবসাইটে ফিরে গিয়ে আবার লোড করুন।'],
+    ru: ['Разрешить и открыть сайт', 'Сохранено. Открываем запрошенный сайт.', 'Сохранено. Вернитесь на сайт и обновите страницу.'],
+    zh: ['允许并打开网站', '已保存。正在打开请求的网站。', '已保存。请返回网站并重新加载。'],
+    id: ['Izinkan dan buka situs', 'Tersimpan. Membuka situs yang diminta.', 'Tersimpan. Kembali ke situs dan muat ulang.']
+  };
+  for (const [code, values] of Object.entries(returnMessages)) {
+    Object.assign(translations[code], Object.fromEntries(returnKeys.map((key, index) => [key, values[index]])));
+  }
   const patterns = [
     [/^Use a domain only \(no URL, path, port or wildcard\): (.+)$/, 'Use a domain only (no URL, path, port or wildcard): {site}', ['site']],
     [/^Invalid domain: (.+)$/, 'Invalid domain: {site}', ['site']],

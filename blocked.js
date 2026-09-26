@@ -7,6 +7,14 @@ function blockedHost(value) {
 }
 
 const host = blockedHost(new URL(location.href).searchParams.get('site'));
+let requestedUrl = '';
+try {
+  const candidate = new URL(location.hash.slice(1));
+  if (['http:', 'https:'].includes(candidate.protocol) && candidate.hostname.toLowerCase() === host && candidate.href.length <= 8192) requestedUrl = candidate.href;
+} catch {}
+if (location.hash) {
+  try { history.replaceState(null, '', `${location.pathname}${location.search}`); } catch {}
+}
 if (host) {
   document.querySelector('#denied-domain').textContent = host;
   document.querySelector('#denied-site').hidden = false;
@@ -31,6 +39,9 @@ async function showReason() {
 }
 
 document.querySelector('#manage').addEventListener('click', async () => {
-  if (host) await chrome.storage.session.set({pendingSite: {host, capturedAt: Date.now()}});
+  if (host) {
+    const tab = await chrome.tabs.getCurrent().catch(() => undefined);
+    await chrome.storage.session.set({pendingSite: {host, requestedUrl, tabId: tab?.id, capturedAt: Date.now()}});
+  }
   await chrome.runtime.openOptionsPage();
 });

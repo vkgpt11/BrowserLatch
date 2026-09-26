@@ -43,7 +43,7 @@ test('bundled PSL handles country suffixes, private suffixes, wildcard rules and
 test('allowlist mode only exempts listed page navigations and their supporting resources', async () => {
   assert.deepEqual(buildRules([], 'allow', BLOCKED_PAGE).map(rule => rule.id), [105]);
   const [fallback, allow, supporting] = buildRules(['youtube.com'], 'allow', BLOCKED_PAGE);
-  assert.equal(fallback.action.redirect.regexSubstitution, `${BLOCKED_PAGE}?site=\\1`);
+  assert.equal(fallback.action.redirect.regexSubstitution, `${BLOCKED_PAGE}?site=\\1#\\0`);
   assert.deepEqual(allow.condition.requestDomains, ['youtube.com']);
   assert.ok(allow.condition.resourceTypes.includes('main_frame'));
   assert.deepEqual(supporting.condition.initiatorDomains, ['youtube.com']);
@@ -60,7 +60,7 @@ test('blocklist mode exempts unlisted requests and blocks listed destinations', 
   assert.equal(rules[1].condition.requestDomains, undefined);
   assert.ok(rules[2].priority > rules[1].priority);
   assert.deepEqual(rules[2].condition.requestDomains, ['example.com']);
-  assert.equal(rules[2].action.redirect.regexSubstitution, `${BLOCKED_PAGE}?site=\\1`);
+  assert.equal(rules[2].action.redirect.regexSubstitution, `${BLOCKED_PAGE}?site=\\1#\\0`);
   assert.equal(rules[3].action.type, 'block');
   assert.deepEqual(buildRules([], 'block', BLOCKED_PAGE).map(rule => rule.id), [105, 104]);
   assert.throws(() => buildRules([], 'invalid', BLOCKED_PAGE));
@@ -106,7 +106,7 @@ async function worker(initialRules = []) {
   vm.runInNewContext(source, {chrome, parseDomains, buildRules, createPasswordRecord, verifyPassword, Date, URL});
   const sender = {id: chrome.runtime.id, url: chrome.runtime.getURL('options.html')};
   const send = message => new Promise(resolve => listener(message, sender, resolve));
-  return {send, chrome, local, actionListener, installedListener, setFail(value) {fail = value;}, getRules() {return persisted;}};
+  return {send, chrome, local, session, actionListener, installedListener, setFail(value) {fail = value;}, getRules() {return persisted;}};
 }
 
 test('worker requires a password, rejects stale saves, and preserves lists when modes change', async () => {
@@ -199,6 +199,19 @@ test('worker only accepts options-page messages and migrates old allow rules', a
   await app.actionListener({url: 'https://www.youtube.com/watch?v=sample'});
   assert.equal((await app.send({type: 'read'})).currentSite, 'www.youtube.com');
   assert.equal((await app.send({type: 'read'})).currentSite, '');
+});
+
+test('parent settings receive the one-time denied address only when it matches the blocked host', async () => {
+  const app = await worker();
+  await app.send({type: 'setup', password: 'parent passphrase'});
+  app.session.pendingSite = {host: 'www.example.net', requestedUrl: 'https://www.example.net/guardrail?value=sample&t=2', tabId: 42, capturedAt: Date.now()};
+  const first = await app.send({type: 'read'});
+  assert.equal(first.currentSite, 'www.example.net');
+  assert.equal(first.requestedUrl, 'https://www.example.net/guardrail?value=sample&t=2');
+  assert.equal(first.requestedTabId, 42);
+  assert.equal((await app.send({type: 'read'})).requestedUrl, '');
+  app.session.pendingSite = {host: 'www.example.net', requestedUrl: 'https://other.test/', tabId: 42, capturedAt: Date.now()};
+  assert.equal((await app.send({type: 'read'})).requestedUrl, '');
 });
 
 test('installation adds hostname redirects and update keeps mixed legacy lists', async () => {
