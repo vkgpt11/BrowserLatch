@@ -1,5 +1,6 @@
 import {parseDomains, buildRules} from './policy.mjs';
 import {createPasswordRecord, verifyPassword} from './auth.mjs';
+import {createRulesBackup, validateRulesBackup} from './backup.mjs';
 
 const AUTH_KEY = 'parentPassword';
 const FAILURE_KEY = 'authFailures';
@@ -72,7 +73,7 @@ async function recordFailure(failure, now) {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('options.html')) return;
-  if (!['status', 'setup', 'unlock', 'lock', 'read', 'save', 'setMode', 'setSupporting', 'changePassword'].includes(message?.type)) return;
+  if (!['status', 'setup', 'unlock', 'lock', 'read', 'save', 'setMode', 'setSupporting', 'changePassword', 'exportBackup', 'inspectBackup', 'importBackup'].includes(message?.type)) return;
   const job = queue.then(async () => {
     const stored = await chrome.storage.local.get([AUTH_KEY, FAILURE_KEY]);
     const record = stored[AUTH_KEY];
@@ -118,6 +119,35 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     let policy = policyFromRules(rules);
     let supporting = (await chrome.storage.local.get(SUPPORT_KEY))[SUPPORT_KEY] !== false;
     let migrationNotice = '';
+    if (message.type === 'exportBackup') {
+      const savedLists = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
+      unlockedUntil = Date.now() + UNLOCK_MS;
+      return {ok: true, backup: validateRulesBackup(createRulesBackup(policy, savedLists, supporting)), expiresAt: unlockedUntil};
+    }
+    if (message.type === 'inspectBackup' || message.type === 'importBackup') {
+      const backup = validateRulesBackup(message.backup);
+      if (message.type === 'inspectBackup') {
+        unlockedUntil = Date.now() + UNLOCK_MS;
+        return {ok: true, backup, expiresAt: unlockedUntil};
+      }
+      if (message.revision !== revisionOf(rules, supporting)) throw new Error('Settings changed in another tab. Reload before importing.');
+      const nextLists = {allow: backup.allowlist, block: backup.blocklist, allowExceptions: backup.blockedSubdomains};
+      const nextDomains = backup.mode === 'allow' ? backup.allowlist : backup.blocklist;
+      const nextExceptions = backup.mode === 'allow' ? backup.blockedSubdomains : [];
+      const nextRules = buildRules(nextDomains, backup.mode, chrome.runtime.getURL('blocked.html'), nextExceptions, backup.allowSupportingResources);
+      const previousLists = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
+      await chrome.storage.local.set({[SAVED_LISTS_KEY]: nextLists, [SUPPORT_KEY]: backup.allowSupportingResources});
+      try {
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: nextRules});
+      } catch (error) {
+        try { await chrome.storage.local.set({[SAVED_LISTS_KEY]: previousLists, [SUPPORT_KEY]: supporting}); }
+        catch { throw new Error('Website rules were not changed, but saved preferences could not be restored. Check both lists before continuing.'); }
+        throw error;
+      }
+      rules = await chrome.declarativeNetRequest.getDynamicRules();
+      policy = policyFromRules(rules);
+      supporting = backup.allowSupportingResources;
+    }
     if (message.type === 'save' || message.type === 'setMode' || message.type === 'setSupporting') {
       if (message.revision !== revisionOf(rules, supporting)) throw new Error('Settings changed in another tab. Reload before saving.');
       if (message.type === 'save') {

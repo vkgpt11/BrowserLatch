@@ -21,6 +21,8 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
     if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'lock') {state.unlocked = false; return {ok: true};}
     if (!state.unlocked) return {ok: false, error: 'Settings are locked.'};
+    if (message.type === 'inspectBackup') return {ok: true, backup: message.backup, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'exportBackup') return {ok: true, backup: {format: 'browselatch-rules', version: 1, mode: state.mode, allowlist: state.mode === 'allow' ? state.domains : state.saved.allow, blocklist: state.mode === 'block' ? state.domains : state.saved.block, blockedSubdomains: state.exceptions, allowSupportingResources: state.supportingResources}, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.revision !== String(state.revision)) return {ok: false, error: 'The list changed in another tab. Reload settings before saving.'};
     if (message.type === 'save') {
       if (state.failSave) return {ok: false, error: 'Rejected update'};
@@ -32,6 +34,13 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
     } else if (message.type === 'setSupporting') {
       if (state.mode !== 'allow' || typeof message.enabled !== 'boolean') return {ok: false, error: 'Invalid setting.'};
       state.supportingResources = message.enabled;
+      state.revision++;
+    } else if (message.type === 'importBackup') {
+      state.mode = message.backup.mode;
+      state.saved = {allow: message.backup.allowlist, block: message.backup.blocklist, allowExceptions: message.backup.blockedSubdomains};
+      state.domains = [...state.saved[state.mode]];
+      state.exceptions = state.mode === 'allow' ? [...state.saved.allowExceptions] : [];
+      state.supportingResources = message.backup.allowSupportingResources;
       state.revision++;
     } else if (message.type === 'setMode') {
       if (state.mode === 'legacy') {state.saved.allow = [...state.legacyAllowed]; state.saved.block = [...state.legacyBlocked];
@@ -68,6 +77,45 @@ test('one active list can be searched and checked against effective access', asy
   fire('#check-form', 'submit');
   assert.match($('#check-result').textContent, /Blocked because/);
   page.dom.window.close();
+});
+
+test('import previews both lists and replaces them only after confirmation', async () => {
+  const page = await createPage({domains: ['old.test']});
+  const {$, fire, state, dom} = page;
+  const backup = {format: 'browselatch-rules', version: 1, mode: 'block', allowlist: ['youtube.com'], blocklist: ['games.test'], blockedSubdomains: [], allowSupportingResources: false};
+  Object.defineProperty($('#import-file'), 'files', {configurable: true, value: [{size: 200, text: async () => JSON.stringify(backup)}]});
+  fire('#import-file', 'change');
+  await settle();
+  assert.deepEqual(state.domains, ['old.test']);
+  assert.match($('#import-preview').textContent, /1 allowed, 1 blocked/);
+  assert.equal($('#import-rules').disabled, false);
+  dom.window.confirm = () => false;
+  fire('#import-rules', 'click');
+  await settle();
+  assert.deepEqual(state.domains, ['old.test']);
+  dom.window.confirm = () => true;
+  fire('#import-rules', 'click');
+  await settle();
+  assert.equal(state.mode, 'block');
+  assert.deepEqual(state.domains, ['games.test']);
+  assert.deepEqual([...state.saved.allow], ['youtube.com']);
+  assert.equal(state.supportingResources, false);
+  assert.match($('#backup-status').textContent, /password was not changed/);
+  assert.equal($('#import-rules').disabled, true);
+});
+
+test('export downloads a dated rules file from the unlocked page', async () => {
+  const page = await createPage({domains: ['example.com']});
+  let filename = '';
+  let file;
+  page.dom.window.URL.createObjectURL = blob => { file = blob; return 'blob:backup'; };
+  page.dom.window.URL.revokeObjectURL = () => {};
+  page.dom.window.HTMLAnchorElement.prototype.click = function() { filename = this.download; };
+  page.fire('#export-rules', 'click');
+  await settle();
+  assert.match(filename, /^browselatch-rules-\d{4}-\d{2}-\d{2}\.json$/);
+  assert.equal(file.type, 'application/json');
+  assert.match(page.$('#backup-status').textContent, /Backup downloaded/);
 });
 
 test('add, remove, and undo keep the active list in sync', async () => {

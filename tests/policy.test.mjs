@@ -6,6 +6,7 @@ import {webcrypto} from 'node:crypto';
 import {parseDomains, buildRules} from '../policy.mjs';
 import {isPublicSuffix} from '../public-suffix.mjs';
 import {createPasswordRecord, verifyPassword, validatePassword} from '../auth.mjs';
+import {createRulesBackup, validateRulesBackup} from '../backup.mjs';
 
 globalThis.crypto ??= webcrypto;
 const BLOCKED_PAGE = 'chrome-extension://unit-test/blocked.html';
@@ -86,6 +87,20 @@ test('strict content setting removes the unlisted supporting-request exemption',
   assert.throws(() => buildRules(['youtube.com'], 'allow', BLOCKED_PAGE, [], 'false'));
 });
 
+test('backup accepts only valid website rules and never includes password data', () => {
+  const backup = createRulesBackup({mode: 'allow', domains: ['example.com'], exceptions: ['kids.example.com']}, {block: ['games.test']}, false);
+  assert.deepEqual(backup.allowlist, ['example.com']);
+  assert.deepEqual(backup.blocklist, ['games.test']);
+  assert.deepEqual(backup.blockedSubdomains, ['kids.example.com']);
+  assert.equal(JSON.stringify(backup).includes('password'), false);
+  assert.deepEqual(validateRulesBackup(backup), backup);
+  for (const change of [
+    {version: 2}, {allowlist: ['com']}, {allowlist: ['https://example.com']},
+    {blockedSubdomains: ['other.test']}, {allowSupportingResources: 'false'},
+    {parentPassword: 'secret'}
+  ]) assert.throws(() => validateRulesBackup({...backup, ...change}));
+});
+
 async function worker(initialRules = []) {
   let listener, installedListener, actionListener, persisted = structuredClone(initialRules), fail = false;
   const local = {};
@@ -103,11 +118,62 @@ async function worker(initialRules = []) {
     }
   };
   const source = (await readFile(new URL('../background.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '');
-  vm.runInNewContext(source, {chrome, parseDomains, buildRules, createPasswordRecord, verifyPassword, Date, URL});
+  vm.runInNewContext(source, {chrome, parseDomains, buildRules, createPasswordRecord, verifyPassword, createRulesBackup, validateRulesBackup, Date, URL});
   const sender = {id: chrome.runtime.id, url: chrome.runtime.getURL('options.html')};
   const send = message => new Promise(resolve => listener(message, sender, resolve));
   return {send, chrome, local, session, actionListener, installedListener, setFail(value) {fail = value;}, getRules() {return persisted;}};
 }
+
+test('backup moves both lists to a new profile without moving its password', async () => {
+  const source = await worker();
+  await source.send({type: 'setup', password: 'source passphrase'});
+  let state = await source.send({type: 'read'});
+  state = await source.send({type: 'save', domains: 'example.com', exceptions: 'kids.example.com', revision: state.revision});
+  state = await source.send({type: 'setSupporting', enabled: false, revision: state.revision});
+  state = await source.send({type: 'setMode', mode: 'block', revision: state.revision});
+  state = await source.send({type: 'save', domains: 'games.test', revision: state.revision});
+  const exported = await source.send({type: 'exportBackup'});
+  assert.equal(exported.ok, true);
+  assert.deepEqual([...exported.backup.allowlist], ['example.com']);
+  assert.deepEqual([...exported.backup.blocklist], ['games.test']);
+  assert.deepEqual([...exported.backup.blockedSubdomains], ['kids.example.com']);
+  assert.equal(exported.backup.allowSupportingResources, false);
+  assert.equal(JSON.stringify(exported.backup).includes('source passphrase'), false);
+
+  const target = await worker();
+  assert.equal((await target.send({type: 'importBackup', backup: exported.backup})).ok, false);
+  await target.send({type: 'setup', password: 'new parent password'});
+  state = await target.send({type: 'read'});
+  const targetPassword = JSON.stringify(target.local.parentPassword);
+  assert.equal((await target.send({type: 'inspectBackup', backup: exported.backup})).ok, true);
+  state = await target.send({type: 'importBackup', backup: exported.backup, revision: state.revision});
+  assert.equal(state.ok, true);
+  assert.equal(state.mode, 'block');
+  assert.deepEqual([...state.domains], ['games.test']);
+  assert.equal(state.supportingResources, false);
+  assert.equal(JSON.stringify(target.local.parentPassword), targetPassword);
+  state = await target.send({type: 'setMode', mode: 'allow', revision: state.revision});
+  assert.deepEqual([...state.domains], ['example.com']);
+  assert.deepEqual([...state.exceptions], ['kids.example.com']);
+  await target.send({type: 'lock'});
+  assert.equal((await target.send({type: 'unlock', password: 'source passphrase'})).ok, false);
+  assert.equal((await target.send({type: 'unlock', password: 'new parent password'})).ok, true);
+});
+
+test('invalid, stale, and failed imports leave the current rules in place', async () => {
+  const app = await worker();
+  await app.send({type: 'setup', password: 'parent passphrase'});
+  let state = await app.send({type: 'read'});
+  state = await app.send({type: 'save', domains: 'example.com', revision: state.revision});
+  const backup = createRulesBackup({mode: 'block', domains: ['games.test']}, {allow: ['youtube.com']}, true);
+  assert.equal((await app.send({type: 'importBackup', backup: {...backup, allowlist: ['co.nz']}, revision: state.revision})).ok, false);
+  assert.equal((await app.send({type: 'importBackup', backup, revision: 'stale'})).ok, false);
+  app.setFail(true);
+  assert.equal((await app.send({type: 'importBackup', backup, revision: state.revision})).ok, false);
+  assert.deepEqual([...(await app.send({type: 'read'})).domains], ['example.com']);
+  assert.equal(app.local.savedModeLists?.block, undefined);
+  app.setFail(false);
+});
 
 test('worker requires a password, rejects stale saves, and preserves lists when modes change', async () => {
   const app = await worker();

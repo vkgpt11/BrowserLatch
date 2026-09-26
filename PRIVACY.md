@@ -1,6 +1,6 @@
 # Privacy policy: BrowseLatch
 
-Effective date: September 23, 2026.
+Effective date: September 27, 2026.
 
 BrowseLatch is a browser extension for Microsoft Edge and Google Chrome that either allows only listed websites or blocks listed websites, depending on the mode you select. It was previously called Only Listed Websites.
 
@@ -12,6 +12,8 @@ The extension does not send your website lists, browsing activity or personal in
 
 ## Storage and control
 You can change or clear either list and choose whether allowed pages may load supporting content from unlisted domains in extension settings. An empty Allowlist blocks websites by default; an empty Blocklist permits them. Uninstalling the extension removes its browser-managed dynamic rules and local extension storage. The extension does not synchronize settings through a publisher service.
+
+You can download a local JSON backup of your website rules and import it into another browser profile. The file contains both website lists, blocked subdomain exceptions, the active mode, and the supporting-content setting. It does not contain your parent password, password verifier, or browsing history. Keep the file private because it includes website names. Importing requires parent access on the destination profile and does not change that profile's password.
 
 ## Permissions
 Network-rule permissions let the browser enforce the selected mode. Access to HTTP and HTTPS websites permits blocked web navigations to be redirected to a local explanatory page.

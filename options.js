@@ -16,6 +16,7 @@ let lockTimer;
 let undoDomains = null;
 let undoExceptions = null;
 let busy = false;
+let pendingBackup = null;
 
 function hideUndo() { $('#undo').hidden = true; $('#undo-exception').hidden = true; }
 const isAccessLockedError = message => /^Settings are locked\.|^Too many attempts\. Settings are temporarily locked\./i.test(message);
@@ -95,6 +96,12 @@ function showLocked(configured, message = '') {
   $('#exception-status').textContent = '';
   $('#network-status').textContent = '';
   $('#legacy-backup-list').textContent = '';
+  $('#backup-status').textContent = '';
+  $('#import-preview').textContent = '';
+  $('#import-preview').hidden = true;
+  $('#import-file').value = '';
+  $('#import-rules').disabled = true;
+  pendingBackup = null;
   $('#current-site-domain').textContent = '';
   $('#change-form').reset();
   $('#password').value = '';
@@ -455,6 +462,74 @@ $('#check-form').addEventListener('submit', event => {
   showCheckResult();
 });
 $('#check-domain').addEventListener('input', () => { $('#check-result').textContent = ''; });
+$('#export-rules').addEventListener('click', async () => {
+  if (busy) return;
+  busy = true;
+  $('#export-rules').disabled = true;
+  try {
+    const result = await request({type: 'exportBackup'});
+    const file = new Blob([`${JSON.stringify(result.backup, null, 2)}\n`], {type: 'application/json'});
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `browselatch-rules-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    $('#backup-status').textContent = 'Backup downloaded. Keep the file somewhere private.';
+    setExpiry(result.expiresAt);
+  } catch (error) {
+    if (isAccessLockedError(error.message)) showLocked(true, error.message);
+    else $('#backup-status').textContent = `Backup not downloaded: ${error.message}`;
+  } finally { busy = false; $('#export-rules').disabled = false; }
+});
+$('#import-file').addEventListener('change', async () => {
+  pendingBackup = null;
+  $('#import-rules').disabled = true;
+  $('#import-preview').hidden = true;
+  $('#import-preview').textContent = '';
+  $('#backup-status').textContent = '';
+  const file = $('#import-file').files?.[0];
+  if (!file) return;
+  if (file.size > 500000) { $('#backup-status').textContent = 'Backup file is too large.'; return; }
+  try {
+    const backup = JSON.parse(await file.text());
+    const result = await request({type: 'inspectBackup', backup});
+    pendingBackup = result.backup;
+    $('#import-preview').textContent = `Ready to replace your rules: ${pendingBackup.allowlist.length} allowed, ${pendingBackup.blocklist.length} blocked. Active rule: ${pendingBackup.mode === 'allow' ? 'Allowlist' : 'Blocklist'}.`;
+    $('#import-preview').hidden = false;
+    $('#import-rules').disabled = false;
+    setExpiry(result.expiresAt);
+  } catch (error) {
+    if (isAccessLockedError(error.message)) showLocked(true, error.message);
+    else $('#backup-status').textContent = `Cannot use this backup: ${error.message}`;
+  }
+});
+$('#import-rules').addEventListener('click', async () => {
+  if (busy || !pendingBackup) return;
+  if (!window.confirm(uiText('Replace both website lists and the content setting with this backup? Your password on this browser will stay the same.'))) return;
+  busy = true;
+  for (const control of settings.querySelectorAll('button,input,select')) control.disabled = true;
+  try {
+    const result = await request({type: 'importBackup', backup: pendingBackup, revision});
+    applyPolicy(result);
+    pendingBackup = null;
+    $('#import-file').value = '';
+    $('#import-rules').disabled = true;
+    $('#import-preview').hidden = true;
+    $('#backup-status').textContent = 'Website rules restored. Your parent password was not changed. Reload open website tabs to apply the rules.';
+  } catch (error) {
+    await reportSaveError(error, '#backup-status');
+  } finally {
+    busy = false;
+    if (!settings.hidden) {
+      for (const control of settings.querySelectorAll('button,input,select')) control.disabled = false;
+      $('#import-rules').disabled = !pendingBackup;
+      render();
+    }
+  }
+});
 $('#change-form').addEventListener('submit', async event => {
   event.preventDefault();
   try { const result = await request({type: 'changePassword', currentPassword: $('#current-password').value, newPassword: $('#replacement-password').value}); event.target.reset(); setExpiry(result.expiresAt); $('#change-status').textContent = 'Password changed.'; }
