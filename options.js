@@ -104,6 +104,10 @@ function showLocked(configured, message = '') {
   pendingBackup = null;
   $('#current-site-domain').textContent = '';
   $('#change-form').reset();
+  $('#guide-form').reset();
+  $('#guide-outcome').textContent = '';
+  $('#guide-outcome').hidden = true;
+  $('#guide-status').textContent = '';
   $('#password').value = '';
   $('#show-password').checked = false;
   $('#password').type = 'password';
@@ -238,6 +242,10 @@ function applyPolicy(result) {
   $('#legacy-backup-list').textContent = (result.legacyAllowedBackup ?? []).join('\n');
   render();
   refreshCheckResult();
+  $('#guide-panel').hidden = !result.guidedSetupPending;
+  $('#main-settings').hidden = Boolean(result.guidedSetupPending);
+  if (result.guidedSetupPending && currentSite && !$('#guide-domain').value) $('#guide-domain').value = currentSite;
+  if (result.guidedSetupPending) updateGuideOutcome();
   authCard.hidden = true;
   settings.hidden = false;
   $('#access-status').hidden = false;
@@ -335,6 +343,43 @@ $('#unlock-form').addEventListener('submit', async event => {
 });
 
 $('#mode-select').addEventListener('change', () => { $('#apply-mode').disabled = mode !== 'legacy' && $('#mode-select').value === mode; });
+function updateGuideOutcome() {
+  const choice = document.querySelector('input[name="guide-mode"]:checked')?.value;
+  const domain = $('#guide-domain').value.trim();
+  $('#guide-outcome').hidden = !choice;
+  if (!choice) return;
+  $('#guide-outcome').textContent = choice === 'allow'
+    ? domain ? `Only ${domain} and its subdomains can open. Other websites are blocked.` : 'No websites will open until you add one.'
+    : domain ? `${domain} and its subdomains will be blocked. Other websites can open.` : 'All websites can open until you add one to the block list.';
+}
+for (const choice of document.querySelectorAll('input[name="guide-mode"]')) choice.addEventListener('change', updateGuideOutcome);
+$('#guide-domain').addEventListener('input', updateGuideOutcome);
+$('#guide-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (busy) return;
+  const choice = document.querySelector('input[name="guide-mode"]:checked')?.value;
+  if (!choice) { $('#guide-status').textContent = 'Choose one website rule to continue.'; return; }
+  busy = true;
+  for (const control of $('#guide-form').querySelectorAll('button,input')) control.disabled = true;
+  try {
+    const result = await request({type: 'completeSetup', mode: choice, domain: $('#guide-domain').value.trim(), revision});
+    const site = currentSite;
+    const returnTo = pendingReturn;
+    applyPolicy(result);
+    currentSite = site;
+    pendingReturn = returnTo;
+    render();
+    $('#status').textContent = 'Setup complete. You can add more websites below.';
+    $('#new-domain').focus();
+    await openRequestedSite();
+  } catch (error) {
+    if (isAccessLockedError(error.message)) showLocked(true, error.message);
+    else $('#guide-status').textContent = `Setup not saved: ${error.message}`;
+  } finally {
+    busy = false;
+    for (const control of $('#guide-form').querySelectorAll('button,input')) control.disabled = false;
+  }
+});
 $('#mode-form').addEventListener('submit', async event => {
   event.preventDefault();
   const nextMode = $('#mode-select').value;

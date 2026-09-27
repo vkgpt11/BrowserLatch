@@ -10,15 +10,15 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 const openWindows = new Set();
 test.afterEach(() => { for (const window of openWindows) window.close(); openWindows.clear(); });
 
-async function createPage({mode = 'allow', domains = [], exceptions = [], supportingResources = true, currentSite = '', requestedUrl = '', legacyAllowed = [], legacyBlocked = [], expiryOffsetMs = 300000} = {}) {
+async function createPage({mode = 'allow', domains = [], exceptions = [], supportingResources = true, currentSite = '', requestedUrl = '', legacyAllowed = [], legacyBlocked = [], guidedSetupPending = false, expiryOffsetMs = 300000} = {}) {
   const dom = new JSDOM(html, {url: 'https://extension.test/options.html', runScripts: 'outside-only'});
   openWindows.add(dom.window);
-  const state = {mode, domains, exceptions, supportingResources, currentSite, requestedUrl, openTabUrl: 'chrome-extension://unit-test/blocked.html?site=' + currentSite, navigated: [], legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, expiryOffsetMs};
+  const state = {mode, domains, exceptions, supportingResources, currentSite, requestedUrl, openTabUrl: 'chrome-extension://unit-test/blocked.html?site=' + currentSite, navigated: [], legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, guidedSetupPending, expiryOffsetMs};
   let onStorageChanged;
   dom.window.confirm = () => true;
   dom.window.chrome = {storage: {onChanged: {addListener(fn) {onStorageChanged = fn;}}}, tabs: {get: async () => ({url: state.openTabUrl}), update: async (id, value) => {state.navigated.push({id, url: value.url});}}, runtime: {getURL: path => `chrome-extension://unit-test/${path}`, sendMessage: async message => {
     if (message.type === 'status') return {ok: true, configured: true, unlocked: state.unlocked, expiresAt: Date.now() + state.expiryOffsetMs};
-    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'lock') {state.unlocked = false; return {ok: true};}
     if (!state.unlocked) return {ok: false, error: 'Settings are locked.'};
     if (message.type === 'inspectBackup') return {ok: true, backup: message.backup, expiresAt: Date.now() + state.expiryOffsetMs};
@@ -34,6 +34,13 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
     } else if (message.type === 'setSupporting') {
       if (state.mode !== 'allow' || typeof message.enabled !== 'boolean') return {ok: false, error: 'Invalid setting.'};
       state.supportingResources = message.enabled;
+      state.revision++;
+    } else if (message.type === 'completeSetup') {
+      if (!state.guidedSetupPending) return {ok: false, error: 'The first-time setup is already complete.'};
+      try { state.domains = parseDomains(message.domain); }
+      catch (error) { return {ok: false, error: error.message}; }
+      state.mode = message.mode;
+      state.guidedSetupPending = false;
       state.revision++;
     } else if (message.type === 'importBackup') {
       state.mode = message.backup.mode;
@@ -51,7 +58,7 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
       state.exceptions = state.mode === 'allow' ? [...state.saved.allowExceptions] : [];
       state.revision++;
     } else return {ok: false, error: `Unexpected message: ${message.type}`};
-    return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: '', expiresAt: Date.now() + state.expiryOffsetMs};
+    return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: '', guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
   }}};
   dom.window.eval(script);
   await settle();
@@ -77,6 +84,54 @@ test('one active list can be searched and checked against effective access', asy
   fire('#check-form', 'submit');
   assert.match($('#check-result').textContent, /Blocked because/);
   page.dom.window.close();
+});
+
+test('new users choose a rule and first site while existing users keep their settings', async () => {
+  const existing = await createPage({domains: ['example.com']});
+  assert.equal(existing.$('#guide-panel').hidden, true);
+  assert.equal(existing.$('#main-settings').hidden, false);
+  const page = await createPage({guidedSetupPending: true});
+  const {$, fire, state} = page;
+  assert.equal($('#guide-panel').hidden, false);
+  assert.equal($('#main-settings').hidden, true);
+  $('input[name="guide-mode"][value="block"]').checked = true;
+  fire('input[name="guide-mode"][value="block"]', 'change');
+  $('#guide-domain').value = 'games.test';
+  fire('#guide-domain', 'input');
+  assert.match($('#guide-outcome').textContent, /games.test and its subdomains will be blocked/);
+  fire('#guide-form', 'submit');
+  await settle();
+  assert.equal(state.guidedSetupPending, false);
+  assert.equal(state.mode, 'block');
+  assert.deepEqual(state.domains, ['games.test']);
+  assert.equal($('#guide-panel').hidden, true);
+  assert.equal($('#main-settings').hidden, false);
+  assert.equal($('#list-title').textContent, 'Blocked websites');
+});
+
+test('first-time guide keeps an invalid site open for correction', async () => {
+  const page = await createPage({guidedSetupPending: true});
+  const {$, fire, state} = page;
+  $('input[name="guide-mode"][value="allow"]').checked = true;
+  $('#guide-domain').value = 'com';
+  fire('#guide-form', 'submit');
+  await settle();
+  assert.equal(state.guidedSetupPending, true);
+  assert.equal($('#guide-panel').hidden, false);
+  assert.match($('#guide-status').textContent, /Setup not saved/);
+  $('#guide-domain').value = '';
+  fire('#guide-domain', 'input');
+  assert.match($('#guide-outcome').textContent, /No websites will open/);
+});
+
+test('first-time guide can use a blocked website and reopen its original page', async () => {
+  const page = await createPage({guidedSetupPending: true, currentSite: 'www.youtube.com', requestedUrl: 'https://www.youtube.com/watch?v=sample&t=2'});
+  assert.equal(page.$('#guide-domain').value, 'www.youtube.com');
+  page.$('input[name="guide-mode"][value="allow"]').checked = true;
+  page.fire('#guide-form', 'submit');
+  await settle();
+  assert.deepEqual(page.state.domains, ['www.youtube.com']);
+  assert.deepEqual(page.state.navigated, [{id: 42, url: 'https://www.youtube.com/watch?v=sample&t=2'}]);
 });
 
 test('import previews both lists and replaces them only after confirmation', async () => {

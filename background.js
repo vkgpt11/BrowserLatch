@@ -6,6 +6,7 @@ const AUTH_KEY = 'parentPassword';
 const FAILURE_KEY = 'authFailures';
 const SAVED_LISTS_KEY = 'savedModeLists';
 const SUPPORT_KEY = 'allowSupportingResources';
+const GUIDE_KEY = 'guidedSetupPending';
 const UNLOCK_MS = 5 * 60 * 1000;
 let unlockedUntil = 0;
 let queue = Promise.resolve();
@@ -23,9 +24,9 @@ chrome.action.onClicked.addListener(async tab => {
 });
 chrome.runtime.onInstalled.addListener(({reason}) => {
   chrome.storage.local.setAccessLevel?.({accessLevel: 'TRUSTED_CONTEXTS'});
-  if (reason === 'install') chrome.runtime.openOptionsPage();
   if (reason === 'install' || reason === 'update') {
     const migration = queue.then(async () => {
+      if (reason === 'install') await chrome.storage.local.set({[GUIDE_KEY]: true});
       const rules = await chrome.declarativeNetRequest.getDynamicRules();
       const policy = policyFromRules(rules);
       const supporting = (await chrome.storage.local.get(SUPPORT_KEY))[SUPPORT_KEY] !== false;
@@ -40,6 +41,7 @@ chrome.runtime.onInstalled.addListener(({reason}) => {
       });
     });
     queue = migration.catch(error => console.error('Could not update website rules:', error));
+    if (reason === 'install') migration.then(() => chrome.runtime.openOptionsPage(), () => chrome.runtime.openOptionsPage());
     return migration;
   }
 });
@@ -73,7 +75,7 @@ async function recordFailure(failure, now) {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('options.html')) return;
-  if (!['status', 'setup', 'unlock', 'lock', 'read', 'save', 'setMode', 'setSupporting', 'changePassword', 'exportBackup', 'inspectBackup', 'importBackup'].includes(message?.type)) return;
+  if (!['status', 'setup', 'unlock', 'lock', 'read', 'save', 'setMode', 'setSupporting', 'changePassword', 'exportBackup', 'inspectBackup', 'importBackup', 'completeSetup'].includes(message?.type)) return;
   const job = queue.then(async () => {
     const stored = await chrome.storage.local.get([AUTH_KEY, FAILURE_KEY]);
     const record = stored[AUTH_KEY];
@@ -119,6 +121,28 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     let policy = policyFromRules(rules);
     let supporting = (await chrome.storage.local.get(SUPPORT_KEY))[SUPPORT_KEY] !== false;
     let migrationNotice = '';
+    const guidedSetupPending = (await chrome.storage.local.get(GUIDE_KEY))[GUIDE_KEY] === true;
+    if (message.type === 'completeSetup') {
+      if (!guidedSetupPending) throw new Error('The first-time setup is already complete.');
+      if (message.revision !== revisionOf(rules, supporting)) throw new Error('Settings changed in another tab. Reload before saving.');
+      if (!['allow', 'block'].includes(message.mode)) throw new Error('Choose how websites should be handled.');
+      if (typeof message.domain !== 'string') throw new Error('Enter a website name or leave it blank.');
+      const first = parseDomains(message.domain.trim());
+      if (first.length > 1) throw new Error('Enter one website at a time.');
+      const nextRules = buildRules(first, message.mode, chrome.runtime.getURL('blocked.html'), [], supporting);
+      const priorLists = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
+      const lists = {allow: message.mode === 'allow' ? first : [], block: message.mode === 'block' ? first : [], allowExceptions: []};
+      await chrome.storage.local.set({[SAVED_LISTS_KEY]: lists, [GUIDE_KEY]: false});
+      try {
+        await chrome.declarativeNetRequest.updateDynamicRules({removeRuleIds: rules.map(rule => rule.id), addRules: nextRules});
+      } catch (error) {
+        try { await chrome.storage.local.set({[SAVED_LISTS_KEY]: priorLists, [GUIDE_KEY]: true}); }
+        catch { throw new Error('Website rules were not changed, but setup could not be restored. Check your settings before continuing.'); }
+        throw error;
+      }
+      rules = await chrome.declarativeNetRequest.getDynamicRules();
+      policy = policyFromRules(rules);
+    }
     if (message.type === 'exportBackup') {
       const savedLists = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
       unlockedUntil = Date.now() + UNLOCK_MS;
@@ -207,7 +231,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     }
     const savedLists = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
     unlockedUntil = Date.now() + UNLOCK_MS;
-    return {ok: true, configured: true, unlocked: true, expiresAt: unlockedUntil, ...policy, supportingResources: supporting, revision: revisionOf(rules, supporting), currentSite, requestedUrl, requestedTabId, migrationNotice, legacyAllowedBackup: savedLists.legacyAllowedBackup ?? []};
+    return {ok: true, configured: true, unlocked: true, expiresAt: unlockedUntil, ...policy, supportingResources: supporting, revision: revisionOf(rules, supporting), currentSite, requestedUrl, requestedTabId, migrationNotice, legacyAllowedBackup: savedLists.legacyAllowedBackup ?? [], guidedSetupPending: message.type === 'completeSetup' ? false : guidedSetupPending};
   });
   queue = job.catch(() => {});
   job.then(respond, error => respond({ok: false, error: error.message}));

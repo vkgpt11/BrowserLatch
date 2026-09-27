@@ -124,6 +124,54 @@ async function worker(initialRules = []) {
   return {send, chrome, local, session, actionListener, installedListener, setFail(value) {fail = value;}, getRules() {return persisted;}};
 }
 
+test('first installation offers setup and saves the chosen rule with its first site', async () => {
+  const app = await worker();
+  await app.installedListener({reason: 'install'});
+  await app.send({type: 'setup', password: 'parent passphrase'});
+  let state = await app.send({type: 'read'});
+  assert.equal(state.guidedSetupPending, true);
+  const password = JSON.stringify(app.local.parentPassword);
+  assert.equal((await app.send({type: 'completeSetup', mode: 'allow', domain: 'com', revision: state.revision})).ok, false);
+  assert.equal((await app.send({type: 'read'})).guidedSetupPending, true);
+  state = await app.send({type: 'completeSetup', mode: 'block', domain: 'games.test', revision: state.revision});
+  assert.equal(state.ok, true);
+  assert.equal(state.guidedSetupPending, false);
+  assert.equal(state.mode, 'block');
+  assert.deepEqual([...state.domains], ['games.test']);
+  assert.equal(JSON.stringify(app.local.parentPassword), password);
+  assert.equal((await app.send({type: 'completeSetup', mode: 'allow', domain: 'other.test', revision: state.revision})).ok, false);
+  assert.deepEqual([...(await app.send({type: 'read'})).domains], ['games.test']);
+});
+
+test('existing profiles and failed setup saves do not replace website rules', async () => {
+  const old = await worker(buildRules(['example.com'], 'allow', BLOCKED_PAGE));
+  await old.installedListener({reason: 'update'});
+  await old.send({type: 'setup', password: 'parent passphrase'});
+  const oldState = await old.send({type: 'read'});
+  assert.equal(oldState.guidedSetupPending, false);
+  assert.deepEqual([...oldState.domains], ['example.com']);
+  const fresh = await worker();
+  await fresh.installedListener({reason: 'install'});
+  await fresh.send({type: 'setup', password: 'parent passphrase'});
+  const state = await fresh.send({type: 'read'});
+  fresh.setFail(true);
+  assert.equal((await fresh.send({type: 'completeSetup', mode: 'block', domain: 'games.test', revision: state.revision})).ok, false);
+  assert.equal((await fresh.send({type: 'read'})).guidedSetupPending, true);
+  assert.deepEqual([...(await fresh.send({type: 'read'})).domains], []);
+});
+
+test('first-time setup can intentionally start with an empty allowlist', async () => {
+  const app = await worker();
+  await app.installedListener({reason: 'install'});
+  await app.send({type: 'setup', password: 'parent passphrase'});
+  const before = await app.send({type: 'read'});
+  const after = await app.send({type: 'completeSetup', mode: 'allow', domain: '', revision: before.revision});
+  assert.equal(after.ok, true);
+  assert.equal(after.guidedSetupPending, false);
+  assert.deepEqual([...after.domains], []);
+  assert.deepEqual(app.getRules().map(rule => rule.id), [105]);
+});
+
 test('backup moves both lists to a new profile without moving its password', async () => {
   const source = await worker();
   await source.send({type: 'setup', password: 'source passphrase'});

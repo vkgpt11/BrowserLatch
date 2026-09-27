@@ -10,7 +10,7 @@ BrowseLatch is available in Microsoft Edge Add-ons. The same extension package c
 
 1. Open `edge://extensions` in desktop Microsoft Edge.
 2. Enable **Developer mode**, select **Load unpacked**, and choose this folder (the one containing `manifest.json`).
-3. The settings page opens automatically. Create a parent password, choose **Allowlist** or **Blocklist**, then add domains. The initial empty Allowlist blocks all websites.
+3. The settings page opens automatically. Create a parent password, then follow the two-step guide: choose **Only open websites I choose** or **Block websites I choose**, and optionally add the first website. The guide explains what an empty list does before you save it.
 4. Use the extension toolbar button or its **Extension options** to edit the list later.
 
 If using the ZIP, extract it first and select the extracted folder containing manifest.json. Keep that folder in place while the extension is installed.
@@ -18,6 +18,7 @@ If using the ZIP, extract it first and select the extracted folder containing ma
 ## Behavior
 
 - **Allowlist** mode permits listed domains and blocks other websites. A blocked subdomain exception can keep part of an allowed website closed. **Blocklist** mode blocks listed domains and permits other websites. Only one mode is active at a time. Each mode remembers its own list when you switch.
+- The short first-install guide appears only on a new installation, after the parent password is created. It saves the chosen mode and first website together. Existing users keep their settings screen and rules when updating.
 - A listed domain includes its subdomains, on all ports and paths. For example, `example.com` covers `www.example.com` but never `example.com.attacker.test` or `notexample.com`.
 - Enter domains only, not URLs, paths, ports or wildcard patterns. Internationalized domains are converted to ASCII (punycode).
 - Public suffixes such as `com`, `co.nz`, and `github.io` are rejected using a complete Public Suffix List bundled with the extension. The list works offline; update the bundled snapshot with `node scripts/update-psl.mjs` before future releases.
