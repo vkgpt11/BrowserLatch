@@ -40,9 +40,13 @@ function supportsOutsideContent(host) {
 }
 
 function receiveCurrentSite(result) {
-  currentSite = result.currentSite || '';
-  pendingReturn = result.requestedUrl && Number.isSafeInteger(result.requestedTabId)
-    ? {url: result.requestedUrl, tabId: result.requestedTabId} : null;
+  // A settings refresh can arrive without a new blocked-page hint. Keep the
+  // requested tab visible until the parent uses it or settings lock.
+  if (result.currentSite) {
+    currentSite = result.currentSite;
+    pendingReturn = result.requestedUrl && Number.isSafeInteger(result.requestedTabId)
+      ? {url: result.requestedUrl, tabId: result.requestedTabId} : null;
+  }
   if (currentSite && !$('#temporary-domain').value) $('#temporary-domain').value = currentSite;
   updateTemporaryKind();
 }
@@ -60,6 +64,7 @@ async function openRequestedSite(feedback = '#status', temporary = false) {
     const blocked = new URL(chrome.runtime.getURL('blocked.html'));
     if (shown.origin !== blocked.origin || shown.pathname !== blocked.pathname) throw new Error('Blocked tab was closed or changed.');
     await chrome.tabs.update(tabId, {url: parsed.href});
+    try { await request({type: 'clearPendingSite', tabId, url: parsed.href}); } catch {}
     $(feedback).textContent = 'Saved. Opening the requested website.';
   } catch {
     $(feedback).textContent = 'Saved. Return to the website and reload it.';
@@ -323,12 +328,12 @@ function render() {
   $('#remove').setAttribute('aria-label', selected ? `Remove ${selected} from ${mode === 'allow' ? 'allowed' : 'blocked'} websites` : 'Remove selected website');
   $('#current-site-box').hidden = !currentSite;
   if (currentSite) {
-    const exception = mode === 'allow' ? exceptions.find(domain => matchesDomain(currentSite, domain)) : '';
+    const blocked = !isAllowed(currentSite);
     const listedParent = domains.filter(domain => matchesDomain(currentSite, domain)).sort((a, b) => b.length - a.length)[0];
     $('#current-site-domain').textContent = currentSite;
     $('#current-site-state').textContent = explain(currentSite);
-    $('#current-site-action').textContent = exception ? 'View blocked subdomain' : listedParent ? 'View saved rule' : mode === 'allow' ? pendingReturn ? 'Allow and open website' : 'Allow this website' : 'Block this website';
-    $('#current-site-action').classList.toggle('secondary', Boolean(exception || listedParent));
+    $('#current-site-action').textContent = blocked ? pendingReturn ? 'Allow and open website' : 'Allow this website' : listedParent ? 'View saved rule' : 'Block this website';
+    $('#current-site-action').classList.toggle('secondary', !blocked && Boolean(listedParent));
   }
   updatePreview();
 }
@@ -576,12 +581,17 @@ $('#add-form').addEventListener('submit', async event => {
 $('#search').addEventListener('input', render);
 $('#sites').addEventListener('change', () => { selected = $('#sites').value; render(); });
 $('#current-site-action').addEventListener('click', async () => {
-  const exception = mode === 'allow' ? exceptions.find(domain => matchesDomain(currentSite, domain)) : '';
+  const coveringExceptions = mode === 'allow' ? exceptions.filter(domain => matchesDomain(currentSite, domain)) : [];
+  const coveringBlocks = mode === 'block' ? domains.filter(domain => matchesDomain(currentSite, domain)) : [];
   const listedParent = domains.filter(domain => matchesDomain(currentSite, domain)).sort((a, b) => b.length - a.length)[0];
-  if (exception) {
-    selectedException = exception;
-    render();
-    $('#exceptions').focus();
+  if (coveringExceptions.length || coveringBlocks.length) {
+    const removed = coveringExceptions.length ? coveringExceptions : coveringBlocks;
+    if (!window.confirm(`${uiText('Allow this website by removing these saved blocks? Their subdomains will also be allowed.')}\n\n${removed.join('\n')}`)) return;
+    if (coveringExceptions.length) {
+      await save(domains, `${currentSite} is now allowed.`, exceptions.filter(domain => !coveringExceptions.includes(domain)), domains, exceptions, '#exception-status');
+    } else {
+      await save(domains.filter(domain => !coveringBlocks.includes(domain)), `${currentSite} is now allowed.`);
+    }
   } else if (listedParent) {
     $('#search').value = '';
     selected = listedParent;
@@ -589,8 +599,13 @@ $('#current-site-action').addEventListener('click', async () => {
     $('#sites').focus();
   } else {
     const host = currentSite;
-    const saved = await save([...domains, host], `${host} added to ${mode === 'allow' ? 'allowed' : 'blocked'} websites.`);
-    if (saved) { $('#search').value = ''; selected = host; render(); }
+    if (mode === 'allow') {
+      const saved = await save([...domains, host], `${host} added to allowed websites.`);
+      if (saved) { $('#search').value = ''; selected = host; render(); }
+    } else {
+      const saved = await save([...domains, host], `${host} added to blocked websites.`);
+      if (saved) { $('#search').value = ''; selected = host; render(); }
+    }
   }
 });
 $('#remove').addEventListener('click', async () => {

@@ -387,7 +387,7 @@ test('worker only accepts options-page messages and migrates old allow rules', a
   await app.send({type: 'setup', password: 'parent passphrase'});
   await app.actionListener({url: 'https://www.youtube.com/watch?v=sample'});
   assert.equal((await app.send({type: 'read'})).currentSite, 'www.youtube.com');
-  assert.equal((await app.send({type: 'read'})).currentSite, '');
+  assert.equal((await app.send({type: 'read'})).currentSite, 'www.youtube.com');
 });
 
 test('parent settings receive the one-time denied address only when it matches the blocked host', async () => {
@@ -398,6 +398,10 @@ test('parent settings receive the one-time denied address only when it matches t
   assert.equal(first.currentSite, 'www.example.net');
   assert.equal(first.requestedUrl, 'https://www.example.net/guardrail?value=sample&t=2');
   assert.equal(first.requestedTabId, 42);
+  assert.equal((await app.send({type: 'read'})).requestedUrl, first.requestedUrl);
+  assert.equal((await app.send({type: 'clearPendingSite', tabId: 42, url: 'https://other.test/'})).ok, true);
+  assert.equal((await app.send({type: 'read'})).requestedUrl, first.requestedUrl);
+  assert.equal((await app.send({type: 'clearPendingSite', tabId: 42, url: first.requestedUrl})).ok, true);
   assert.equal((await app.send({type: 'read'})).requestedUrl, '');
   app.session.pendingSite = {host: 'www.example.net', requestedUrl: 'https://other.test/', tabId: 42, capturedAt: Date.now()};
   assert.equal((await app.send({type: 'read'})).requestedUrl, '');

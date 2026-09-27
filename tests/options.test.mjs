@@ -22,6 +22,7 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
     if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, strictContentSites: state.strictContentSites, temporaryGrants: state.temporaryGrants, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'lock') {state.unlocked = false; return {ok: true};}
     if (!state.unlocked) return {ok: false, error: 'Settings are locked.'};
+    if (message.type === 'clearPendingSite') return {ok: true};
     if (message.type === 'getTemporary') return {ok: true, temporaryGrants: state.temporaryGrants};
     if (message.type === 'inspectBackup') return {ok: true, backup: validateRulesBackup(message.backup), expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'exportBackup') return {ok: true, backup: {format: 'browselatch-rules', version: 2, mode: state.mode, allowlist: state.mode === 'allow' ? state.domains : state.saved.allow, blocklist: state.mode === 'block' ? state.domains : state.saved.block, blockedSubdomains: state.exceptions, strictContentSites: state.strictContentSites}, expiresAt: Date.now() + state.expiryOffsetMs};
@@ -354,9 +355,7 @@ test('parent can inspect, add, remove, and undo blocked child exceptions', async
   const {$, fire, state} = page;
   assert.equal($('#exceptions-panel').hidden, false);
   assert.match($('#current-site-state').textContent, /kids.example.com is a blocked subdomain/);
-  assert.equal($('#current-site-action').textContent, 'View blocked subdomain');
-  fire('#current-site-action', 'click');
-  assert.equal($('#exceptions').value, 'kids.example.com');
+  assert.equal($('#current-site-action').textContent, 'Allow this website');
   $('#check-domain').value = 'www.example.com';
   fire('#check-form', 'submit');
   assert.match($('#check-result').textContent, /Allowed by example.com/);
@@ -570,6 +569,45 @@ test('allowing a blocked website reopens its exact page after saving', async () 
   assert.deepEqual(page.state.domains, ['www.youtube.com']);
   assert.deepEqual(page.state.navigated, [{id: 42, url: 'https://www.youtube.com/watch?v=sample&t=2'}]);
   assert.match(page.$('#status').textContent, /Opening the requested website/);
+});
+
+test('adding a covering Allowlist domain reopens the exact requested URL', async () => {
+  const page = await createPage({currentSite: 'www.youtube.com', requestedUrl: 'https://www.youtube.com/watch?v=sample&t=2'});
+  page.$('#new-domain').value = 'youtube.com';
+  page.fire('#add-form', 'submit');
+  await settle();
+  assert.deepEqual(page.state.domains, ['youtube.com']);
+  assert.deepEqual(page.state.navigated, [{id: 42, url: 'https://www.youtube.com/watch?v=sample&t=2'}]);
+});
+
+test('the requested page survives a second settings read before the parent allows it', async () => {
+  const page = await createPage({currentSite: 'www.youtube.com', requestedUrl: 'https://www.youtube.com/watch?v=sample&t=2'});
+  page.state.currentSite = '';
+  page.state.requestedUrl = '';
+  page.triggerSite();
+  await settle();
+  assert.equal(page.$('#current-site-domain').textContent, 'www.youtube.com');
+  page.fire('#current-site-action', 'click');
+  await settle();
+  assert.deepEqual(page.state.navigated, [{id: 42, url: 'https://www.youtube.com/watch?v=sample&t=2'}]);
+});
+
+test('allowing a blocked subdomain removes every covering exception and opens its requested page', async () => {
+  const page = await createPage({domains: ['example.com'], exceptions: ['kids.example.com', 'games.kids.example.com'], currentSite: 'games.kids.example.com', requestedUrl: 'https://games.kids.example.com/game?level=2'});
+  assert.equal(page.$('#current-site-action').textContent, 'Allow and open website');
+  page.fire('#current-site-action', 'click');
+  await settle();
+  assert.deepEqual(page.state.exceptions, []);
+  assert.deepEqual(page.state.navigated, [{id: 42, url: 'https://games.kids.example.com/game?level=2'}]);
+});
+
+test('allowing a blocked website in Blocklist mode removes covering rules and opens its requested page', async () => {
+  const page = await createPage({mode: 'block', domains: ['example.com', 'kids.example.com', 'other.test'], currentSite: 'kids.example.com', requestedUrl: 'https://kids.example.com/watch?v=2'});
+  assert.equal(page.$('#current-site-action').textContent, 'Allow and open website');
+  page.fire('#current-site-action', 'click');
+  await settle();
+  assert.deepEqual(page.state.domains, ['other.test']);
+  assert.deepEqual(page.state.navigated, [{id: 42, url: 'https://kids.example.com/watch?v=2'}]);
 });
 
 test('failed saves and unrelated rules do not reopen the blocked tab', async () => {

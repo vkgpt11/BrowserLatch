@@ -53,11 +53,14 @@ try {
   assert.equal(state.ok, true, JSON.stringify(state));
   const allowOther = await outcome('https://wikipedia.org/');
   assert.equal(allowOther.matchedRules[0]?.ruleId, 104, JSON.stringify(allowOther));
-  state = await message({type: 'save', domains: 'youtube.com', revision: state.revision});
+  state = await message({type: 'save', domains: 'blocked.test', revision: state.revision});
   assert.equal(state.ok, true, JSON.stringify(state));
-  const blockYouTube = await outcome('https://youtube.com/');
-  assert.equal(blockYouTube.matchedRules[0]?.ruleId, 102, JSON.stringify(blockYouTube));
-  const deniedTab = await (await fetch(`http://127.0.0.1:${port}/json/new?https://youtube.com/`, {method: 'PUT'})).json();
+  const blockTestSite = await outcome('https://blocked.test/');
+  assert.equal(blockTestSite.matchedRules[0]?.ruleId, 102, JSON.stringify(blockTestSite));
+  await call('Page.reload');
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const blockedRequestedUrl = 'https://blocked.test/watch?v=2';
+  const deniedTab = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(blockedRequestedUrl)}`, {method: 'PUT'})).json();
   let deniedUrl = '';
   for (let attempt = 0; attempt < 20; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -65,7 +68,35 @@ try {
     deniedUrl = pages.find(page => page.id === deniedTab.id)?.url ?? '';
     if (deniedUrl.includes('/blocked.html')) break;
   }
-  assert.match(deniedUrl, /^chrome-extension:\/\/[^/]+\/blocked\.html\?site=youtube\.com(?:#https:\/\/youtube\.com\/)?$/);
+  assert.match(deniedUrl, /^chrome-extension:\/\/[^/]+\/blocked\.html\?site=blocked\.test/);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const deniedTarget = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(page => page.id === deniedTab.id);
+  const deniedSocket = new WebSocket(deniedTarget.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {deniedSocket.addEventListener('open', resolve, {once: true}); deniedSocket.addEventListener('error', reject, {once: true});});
+  const deniedClick = new Promise((resolve, reject) => deniedSocket.addEventListener('message', event => {
+    const response = JSON.parse(event.data);
+    if (response.id !== 1) return;
+    response.error ? reject(new Error(response.error.message)) : resolve(response.result);
+  }));
+  deniedSocket.send(JSON.stringify({id: 1, method: 'Runtime.evaluate', params: {expression: "document.querySelector('#manage').click()", returnByValue: true}}));
+  const deniedClickResult = await deniedClick;
+  assert.equal(deniedClickResult.exceptionDetails, undefined, JSON.stringify(deniedClickResult.exceptionDetails));
+  deniedSocket.close();
+  for (let attempt = 0; attempt < 50; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    if (await evaluate("document.querySelector('#current-site-domain').textContent") === 'blocked.test') break;
+  }
+  assert.equal(await evaluate("document.querySelector('#current-site-action').textContent"), 'Allow and open website');
+  await evaluate("window.confirm = () => true; document.querySelector('#current-site-action').click()");
+  let reopenedBlocked = '';
+  for (let attempt = 0; attempt < 50; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    reopenedBlocked = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(page => page.id === deniedTab.id)?.url ?? '';
+    if (reopenedBlocked === blockedRequestedUrl) break;
+  }
+  assert.equal(reopenedBlocked, blockedRequestedUrl);
+  state = await message({type: 'read'});
+  assert.deepEqual(state.domains, []);
   await call('Page.reload');
   await new Promise(resolve => setTimeout(resolve, 500));
   assert.equal(await evaluate("document.querySelector('#list-title').textContent"), 'Blocked websites');

@@ -834,7 +834,26 @@
     if (values.length !== temporaryDynamicKeys.length) throw new Error(`Temporary message translation count mismatch: ${code}`);
     Object.assign(translations[code], Object.fromEntries(temporaryDynamicKeys.map((key, index) => [key, values[index]])));
   }
+  const allowReturnKeys = [
+    'Allow this website by removing these saved blocks? Their subdomains will also be allowed.',
+    '{site} is now allowed.'
+  ];
+  const allowReturnTranslations = {
+    hi: ['सहेजे गए ये ब्लॉक हटाकर यह वेबसाइट खोलें? इनके उपडोमेन भी खुलेंगे।', '{site} अब अनुमत है।'],
+    es: ['¿Permitir este sitio quitando estos bloqueos guardados? Sus subdominios también quedarán permitidos.', '{site} ahora está permitido.'],
+    fr: ['Autoriser ce site en supprimant ces blocages enregistrés ? Leurs sous-domaines seront aussi autorisés.', '{site} est maintenant autorisé.'],
+    pt: ['Permitir este site removendo estes bloqueios salvos? Os subdomínios também serão permitidos.', '{site} agora está permitido.'],
+    ar: ['هل تريد السماح بهذا الموقع بإزالة قواعد الحظر المحفوظة هذه؟ سيُسمح أيضًا بنطاقاتها الفرعية.', 'أصبح {site} مسموحًا به.'],
+    bn: ['সংরক্ষিত এই ব্লকগুলো সরিয়ে ওয়েবসাইটটি অনুমোদন করবেন? এর সাবডোমেনগুলোও অনুমোদিত হবে।', '{site} এখন অনুমোদিত।'],
+    ru: ['Разрешить этот сайт, удалив сохранённые блокировки? Их поддомены также станут доступны.', 'Сайт {site} теперь разрешён.'],
+    zh: ['移除这些已保存的阻止规则以允许访问此网站？其子域名也将被允许。', '现在可以访问 {site}。'],
+    id: ['Izinkan situs ini dengan menghapus aturan blokir tersimpan ini? Subdomainnya juga akan diizinkan.', '{site} sekarang diizinkan.']
+  };
+  for (const [code, values] of Object.entries(allowReturnTranslations)) {
+    Object.assign(translations[code], Object.fromEntries(allowReturnKeys.map((key, index) => [key, values[index]])));
+  }
   const patterns = [
+    [/^(.+) is now allowed\.$/, '{site} is now allowed.', ['site']],
     [/^Only (.+) and its subdomains can open\. Other websites are blocked\.$/, 'Only {site} and its subdomains can open. Other websites are blocked.', ['site']],
     [/^(.+) and its subdomains will be blocked\. Other websites can open\.$/, '{site} and its subdomains will be blocked. Other websites can open.', ['site']],
     [/^Ready to replace your rules: (\d+) allowed, (\d+) blocked\. Active rule: (.+)\.$/, 'Ready to replace your rules: {a} allowed, {b} blocked. Active rule: {mode}.', ['a', 'b', 'mode']],

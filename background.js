@@ -156,7 +156,7 @@ async function recordFailure(failure, now) {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('options.html')) return;
-  if (!['status', 'setup', 'unlock', 'read', 'getTemporary', 'lock', 'save', 'setMode', 'setSupporting', 'changePassword', 'exportBackup', 'inspectBackup', 'importBackup', 'completeSetup', 'grantTemporary', 'revokeTemporary'].includes(message?.type)) return;
+  if (!['status', 'setup', 'unlock', 'read', 'clearPendingSite', 'getTemporary', 'lock', 'save', 'setMode', 'setSupporting', 'changePassword', 'exportBackup', 'inspectBackup', 'importBackup', 'completeSetup', 'grantTemporary', 'revokeTemporary'].includes(message?.type)) return;
   const job = queue.then(async () => {
     const stored = await chrome.storage.local.get([AUTH_KEY, FAILURE_KEY]);
     const record = stored[AUTH_KEY];
@@ -183,10 +183,16 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     }
     if (message.type === 'lock') {
       unlockedUntil = 0;
+      await chrome.storage.session.remove('pendingSite');
       await chrome.storage.session.set({accessLockVersion: now});
       return {ok: true, configured: Boolean(record), unlocked: false};
     }
     if (!record || now >= unlockedUntil) throw new Error('Settings are locked. Enter the parent password.');
+    if (message.type === 'clearPendingSite') {
+      const {pendingSite} = await chrome.storage.session.get('pendingSite');
+      if (pendingSite?.tabId === message.tabId && pendingSite?.requestedUrl === message.url) await chrome.storage.session.remove('pendingSite');
+      return {ok: true};
+    }
     if (message.type === 'getTemporary') {
       let {timed, visits} = await temporaryState();
       if (timed.some(grant => grant.expiresAt <= Date.now())) {
@@ -360,8 +366,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     let requestedTabId;
     if (message.type === 'read') {
       const {pendingSite} = await chrome.storage.session.get('pendingSite');
-      await chrome.storage.session.remove('pendingSite');
-      if (pendingSite && now - pendingSite.capturedAt < UNLOCK_MS) {
+      if (pendingSite && now >= pendingSite.capturedAt && now - pendingSite.capturedAt < UNLOCK_MS) {
         currentSite = validBlockedHost(pendingSite.host);
         try {
           const url = new URL(pendingSite.requestedUrl);
