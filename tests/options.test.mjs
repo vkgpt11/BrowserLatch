@@ -171,6 +171,10 @@ test('diagnostic checks strict supporting content and refreshes after its settin
   fire('#check-form', 'submit');
   assert.match($('#diagnosis').textContent, /content from unlisted websites is blocked/);
   assert.equal($('#diagnostic-action').textContent, 'Review content setting');
+  assert.equal($('#network-panel').open, false);
+  fire('#diagnostic-action', 'click');
+  assert.equal($('#network-panel').open, true);
+  assert.equal($('#network-site').value, 'example.com');
   $('#related-domain').value = 'cdn.example.net';
   fire('#related-domain', 'input');
   assert.equal($('#diagnosis-results').hidden, true);
@@ -415,6 +419,9 @@ test('parent chooses supporting content separately for each website and drafts s
   const page = await createPage({domains: ['school.example', 'youtube.com']});
   const {$, fire, state} = page;
   assert.equal($('#network-panel').hidden, false);
+  assert.equal($('#network-panel').parentElement.id, 'rules-panel');
+  assert.equal($('#more-settings').open, false);
+  assert.equal($('#check-panel').open, false);
   assert.equal($('#network-site').value, 'school.example');
   assert.equal($('#supporting-resources').checked, true);
   assert.equal($('#apply-network').disabled, true);
@@ -434,6 +441,11 @@ test('parent chooses supporting content separately for each website and drafts s
   $('#network-site').value = 'youtube.com';
   fire('#network-site', 'change');
   assert.equal($('#supporting-resources').checked, true);
+  $('#search').value = '';
+  fire('#search', 'input');
+  $('#sites').value = 'school.example';
+  fire('#sites', 'change');
+  assert.equal($('#network-site').value, 'school.example');
   $('#new-domain').value = 'new.test';
   fire('#add-form', 'submit');
   await settle();

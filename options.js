@@ -579,7 +579,11 @@ $('#add-form').addEventListener('submit', async event => {
 });
 
 $('#search').addEventListener('input', render);
-$('#sites').addEventListener('change', () => { selected = $('#sites').value; render(); });
+$('#sites').addEventListener('change', () => {
+  selected = $('#sites').value;
+  if (mode === 'allow' && selected) $('#network-site').value = selected;
+  render();
+});
 $('#current-site-action').addEventListener('click', async () => {
   const coveringExceptions = mode === 'allow' ? exceptions.filter(domain => matchesDomain(currentSite, domain)) : [];
   const coveringBlocks = mode === 'block' ? domains.filter(domain => matchesDomain(currentSite, domain)) : [];
@@ -747,6 +751,7 @@ $('#diagnostic-action').addEventListener('click', async () => {
   const action = diagnosticAction;
   if (!action || busy) return;
   if (action.type === 'reviewSupporting') {
+    $('#network-panel').open = true;
     if (action.domain && domains.includes(action.domain)) {
       $('#network-site').value = action.domain;
       $('#network-site').dispatchEvent(new Event('change'));

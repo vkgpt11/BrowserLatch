@@ -852,6 +852,12 @@
   for (const [code, values] of Object.entries(allowReturnTranslations)) {
     Object.assign(translations[code], Object.fromEntries(allowReturnKeys.map((key, index) => [key, values[index]])));
   }
+  const moreSettingsTranslations = {
+    hi: 'और सेटिंग', es: 'Más ajustes', fr: 'Autres paramètres', pt: 'Mais configurações',
+    ar: 'إعدادات إضافية', bn: 'আরও সেটিংস', ru: 'Дополнительные настройки',
+    zh: '更多设置', id: 'Pengaturan lainnya'
+  };
+  for (const [code, value] of Object.entries(moreSettingsTranslations)) translations[code]['More settings'] = value;
   const patterns = [
     [/^(.+) is now allowed\.$/, '{site} is now allowed.', ['site']],
     [/^Only (.+) and its subdomains can open\. Other websites are blocked\.$/, 'Only {site} and its subdomains can open. Other websites are blocked.', ['site']],
