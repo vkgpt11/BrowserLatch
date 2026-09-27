@@ -14,14 +14,15 @@ test.afterEach(() => { for (const window of openWindows) window.close(); openWin
 async function createPage({mode = 'allow', domains = [], exceptions = [], supportingResources = true, strictContentSites = supportingResources ? [] : domains, currentSite = '', requestedUrl = '', legacyAllowed = [], legacyBlocked = [], guidedSetupPending = false, expiryOffsetMs = 300000} = {}) {
   const dom = new JSDOM(html, {url: 'https://extension.test/options.html', runScripts: 'outside-only'});
   openWindows.add(dom.window);
-  const state = {mode, domains, exceptions, strictContentSites, currentSite, requestedUrl, openTabUrl: 'chrome-extension://unit-test/blocked.html?site=' + currentSite, navigated: [], legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, guidedSetupPending, expiryOffsetMs};
+  const state = {mode, domains, exceptions, strictContentSites, temporaryGrants: [], currentSite, requestedUrl, openTabUrl: 'chrome-extension://unit-test/blocked.html?site=' + currentSite, navigated: [], legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, guidedSetupPending, expiryOffsetMs};
   let onStorageChanged;
   dom.window.confirm = () => true;
   dom.window.chrome = {storage: {onChanged: {addListener(fn) {onStorageChanged = fn;}}}, tabs: {get: async () => ({url: state.openTabUrl}), update: async (id, value) => {state.navigated.push({id, url: value.url});}}, runtime: {getURL: path => `chrome-extension://unit-test/${path}`, sendMessage: async message => {
     if (message.type === 'status') return {ok: true, configured: true, unlocked: state.unlocked, expiresAt: Date.now() + state.expiryOffsetMs};
-    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, strictContentSites: state.strictContentSites, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, strictContentSites: state.strictContentSites, temporaryGrants: state.temporaryGrants, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'lock') {state.unlocked = false; return {ok: true};}
     if (!state.unlocked) return {ok: false, error: 'Settings are locked.'};
+    if (message.type === 'getTemporary') return {ok: true, temporaryGrants: state.temporaryGrants};
     if (message.type === 'inspectBackup') return {ok: true, backup: validateRulesBackup(message.backup), expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'exportBackup') return {ok: true, backup: {format: 'browselatch-rules', version: 2, mode: state.mode, allowlist: state.mode === 'allow' ? state.domains : state.saved.allow, blocklist: state.mode === 'block' ? state.domains : state.saved.block, blockedSubdomains: state.exceptions, strictContentSites: state.strictContentSites}, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.revision !== String(state.revision)) return {ok: false, error: 'The list changed in another tab. Reload settings before saving.'};
@@ -38,6 +39,10 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
       if (state.mode !== 'allow' || !state.domains.includes(message.domain) || typeof message.enabled !== 'boolean') return {ok: false, error: 'Invalid setting.'};
       state.strictContentSites = message.enabled ? state.strictContentSites.filter(site => site !== message.domain) : [...state.strictContentSites, message.domain];
       state.revision++;
+    } else if (message.type === 'grantTemporary') {
+      state.temporaryGrants.push({slot: state.temporaryGrants.length, domain: message.domain, kind: message.kind, ...(message.kind === 'visit' ? {tabId: message.tabId} : {expiresAt: Date.now() + 900000})});
+    } else if (message.type === 'revokeTemporary') {
+      state.temporaryGrants = state.temporaryGrants.filter(grant => grant.slot !== message.slot);
     } else if (message.type === 'completeSetup') {
       if (!state.guidedSetupPending) return {ok: false, error: 'The first-time setup is already complete.'};
       try { state.domains = parseDomains(message.domain); }
@@ -61,7 +66,7 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
       state.exceptions = state.mode === 'allow' ? [...state.saved.allowExceptions] : [];
       state.revision++;
     } else return {ok: false, error: `Unexpected message: ${message.type}`};
-    return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, strictContentSites: state.strictContentSites, revision: String(state.revision), currentSite: '', guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
+    return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, strictContentSites: state.strictContentSites, temporaryGrants: state.temporaryGrants, revision: String(state.revision), currentSite: '', guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
   }}};
   dom.window.eval(script);
   await settle();
@@ -87,6 +92,38 @@ test('one active list can be searched and checked against effective access', asy
   fire('#check-form', 'submit');
   assert.match($('#check-result').textContent, /Blocked because/);
   page.dom.window.close();
+});
+
+test('parent can grant one visit from a blocked page, return to it, and end access', async () => {
+  const page = await createPage({currentSite: 'example.com', requestedUrl: 'https://example.com/article?id=2'});
+  const {$, fire, state} = page;
+  assert.equal($('#temporary-domain').value, 'example.com');
+  assert.equal($('#temporary-kind').querySelector('option[value="visit"]').disabled, false);
+  $('#temporary-kind').value = 'visit';
+  fire('#temporary-form', 'submit');
+  await settle();
+  assert.equal(state.temporaryGrants[0].kind, 'visit');
+  assert.deepEqual(state.navigated, [{id: 42, url: 'https://example.com/article?id=2'}]);
+  assert.equal($('#temporary-list').options.length, 1);
+  $('#temporary-list').value = '0';
+  fire('#temporary-list', 'change');
+  fire('#temporary-remove', 'click');
+  await settle();
+  assert.deepEqual(state.temporaryGrants, []);
+  assert.equal($('#temporary-empty').hidden, false);
+});
+
+test('parent can give 15-minute access without changing saved website rules', async () => {
+  const page = await createPage({domains: ['youtube.com']});
+  const {$, fire, state} = page;
+  assert.equal($('#temporary-kind').querySelector('option[value="visit"]').disabled, true);
+  $('#temporary-domain').value = 'example.com';
+  fire('#temporary-domain', 'input');
+  fire('#temporary-form', 'submit');
+  await settle();
+  assert.equal(state.temporaryGrants[0].kind, 'timed');
+  assert.deepEqual(state.domains, ['youtube.com']);
+  assert.match($('#temporary-list').options[0].textContent, /example.com/);
 });
 
 test('diagnostic distinguishes a blocked main page and can allow it', async () => {

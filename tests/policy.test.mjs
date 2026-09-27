@@ -7,6 +7,7 @@ import {parseDomains, buildRules} from '../policy.mjs';
 import {isPublicSuffix} from '../public-suffix.mjs';
 import {createPasswordRecord, verifyPassword, validatePassword} from '../auth.mjs';
 import {createRulesBackup, validateRulesBackup} from '../backup.mjs';
+import {exactDomain, matchesTemporaryDomain, isBlockedByPolicy, nextTemporarySlot, temporaryRules, TEMP_RULE_START, TEMP_DURATION_MS, MAX_TEMP_GRANTS} from '../temporary.mjs';
 
 globalThis.crypto ??= webcrypto;
 const BLOCKED_PAGE = 'chrome-extension://unit-test/blocked.html';
@@ -118,27 +119,85 @@ test('backup accepts only valid website rules and never includes password data',
 });
 
 async function worker(initialRules = []) {
-  let listener, installedListener, actionListener, persisted = structuredClone(initialRules), fail = false;
+  let listener, installedListener, startupListener, actionListener, alarmListener, navigationListener, removedListener, persisted = structuredClone(initialRules), sessionRules = [], fail = false;
   const local = {};
   const session = {};
+  const alarms = new Map();
   const chrome = {
     action: {onClicked: {addListener(fn) {actionListener = fn;}}},
-    runtime: {id: 'unit-test', getURL: path => `chrome-extension://unit-test/${path}`, openOptionsPage() {}, onInstalled: {addListener(fn) {installedListener = fn;}}, onMessage: {addListener(fn) {listener = fn;}}},
+    runtime: {id: 'unit-test', getURL: path => `chrome-extension://unit-test/${path}`, openOptionsPage() {}, onInstalled: {addListener(fn) {installedListener = fn;}}, onStartup: {addListener(fn) {startupListener = fn;}}, onMessage: {addListener(fn) {listener = fn;}}},
+    alarms: {clear: async name => alarms.delete(name), create: async (name, info) => {alarms.set(name, info);}, onAlarm: {addListener(fn) {alarmListener = fn;}}},
+    webNavigation: {onCommitted: {addListener(fn) {navigationListener = fn;}}},
+    tabs: {get: async tabId => ({id: tabId, url: `chrome-extension://unit-test/blocked.html?site=example.com`}), onRemoved: {addListener(fn) {removedListener = fn;}}},
     storage: {
       local: {setAccessLevel() {}, get: async keys => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter(key => key in local).map(key => [key, structuredClone(local[key])])), set: async values => Object.assign(local, structuredClone(values))},
       session: {get: async key => ({[key]: session[key]}), set: async values => Object.assign(session, values), remove: async key => {delete session[key];}}
     },
     declarativeNetRequest: {
       getDynamicRules: async () => structuredClone(persisted),
-      updateDynamicRules: async ({addRules}) => { if (fail) throw new Error('Rejected update'); persisted = structuredClone(addRules); }
+      updateDynamicRules: async ({addRules}) => { if (fail) throw new Error('Rejected update'); persisted = structuredClone(addRules); },
+      getSessionRules: async () => structuredClone(sessionRules),
+      updateSessionRules: async ({removeRuleIds, addRules}) => {if (fail) throw new Error('Rejected update'); sessionRules = [...sessionRules.filter(rule => !removeRuleIds.includes(rule.id)), ...structuredClone(addRules)];}
     }
   };
   const source = (await readFile(new URL('../background.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '');
-  vm.runInNewContext(source, {chrome, parseDomains, buildRules, createPasswordRecord, verifyPassword, createRulesBackup, validateRulesBackup, Date, URL});
+  vm.runInNewContext(source, {chrome, parseDomains, buildRules, createPasswordRecord, verifyPassword, createRulesBackup, validateRulesBackup, exactDomain, matchesTemporaryDomain, isBlockedByPolicy, nextTemporarySlot, temporaryRules, TEMP_RULE_START, TEMP_DURATION_MS, MAX_TEMP_GRANTS, Date, URL});
   const sender = {id: chrome.runtime.id, url: chrome.runtime.getURL('options.html')};
   const send = message => new Promise(resolve => listener(message, sender, resolve));
-  return {send, chrome, local, session, actionListener, installedListener, setFail(value) {fail = value;}, getRules() {return persisted;}};
+  return {send, chrome, local, session, alarms, actionListener, installedListener, startupListener, alarmListener, navigationListener, removedListener, setFail(value) {fail = value;}, getRules() {return persisted;}, getSessionRules() {return sessionRules;}, clearSessionRules() {sessionRules = [];}};
 }
+
+test('15-minute access overrides a blocked site, expires, and leaves saved rules unchanged', async () => {
+  const app = await worker();
+  assert.equal((await app.send({type: 'grantTemporary', domain: 'example.com', kind: 'timed'})).ok, false);
+  await app.send({type: 'setup', password: 'parent passphrase'});
+  let state = await app.send({type: 'read'});
+  state = await app.send({type: 'save', domains: 'youtube.com', revision: state.revision});
+  assert.equal((await app.send({type: 'grantTemporary', domain: 'youtube.com', kind: 'timed', revision: state.revision})).ok, false);
+  assert.equal((await app.send({type: 'grantTemporary', domain: 'co.nz', kind: 'timed', revision: state.revision})).ok, false);
+  state = await app.send({type: 'grantTemporary', domain: 'example.com', kind: 'timed', revision: state.revision});
+  assert.equal(state.ok, true);
+  assert.deepEqual([...state.domains], ['youtube.com']);
+  assert.equal(state.temporaryGrants[0].domain, 'example.com');
+  assert.ok(state.temporaryGrants[0].expiresAt > Date.now());
+  assert.deepEqual(app.getSessionRules().map(rule => rule.id), [10000, 10001]);
+  assert.equal(app.getSessionRules()[0].condition.requestDomains[0], 'example.com');
+  assert.ok(app.alarms.has('temporary-access-expiry'));
+  assert.equal((await app.send({type: 'grantTemporary', domain: 'example.com', kind: 'timed', revision: state.revision})).ok, false);
+  app.clearSessionRules();
+  app.startupListener();
+  await app.send({type: 'getTemporary'});
+  assert.equal(app.getSessionRules().length, 2);
+  app.local.temporaryTimedGrants[0].expiresAt = Date.now() - 1;
+  app.alarmListener({name: 'temporary-access-expiry'});
+  await app.send({type: 'getTemporary'});
+  assert.deepEqual(app.getSessionRules(), []);
+  assert.deepEqual(app.local.temporaryTimedGrants, []);
+  assert.deepEqual(app.getRules().find(rule => rule.id === 100).condition.requestDomains, ['youtube.com']);
+});
+
+test('one-visit access is limited to its blocked tab and ends after leaving or closing it', async () => {
+  const app = await worker();
+  await app.send({type: 'setup', password: 'parent passphrase'});
+  let state = await app.send({type: 'read'});
+  state = await app.send({type: 'grantTemporary', domain: 'example.com', kind: 'visit', tabId: 42, revision: state.revision});
+  assert.equal(state.ok, true);
+  assert.deepEqual(app.getSessionRules().map(rule => rule.condition.tabIds[0]), [42, 42]);
+  assert.equal((await app.send({type: 'grantTemporary', domain: 'other.test', kind: 'visit', tabId: 42, revision: state.revision})).ok, false);
+  app.navigationListener({tabId: 42, frameId: 0, url: 'https://example.com/start'});
+  await app.send({type: 'getTemporary'});
+  assert.equal(app.session.temporaryVisitGrants[0].started, true);
+  app.navigationListener({tabId: 42, frameId: 0, url: 'https://sub.example.com/next'});
+  await app.send({type: 'getTemporary'});
+  assert.equal(app.getSessionRules().length, 2);
+  app.navigationListener({tabId: 42, frameId: 0, url: 'https://other.test/'});
+  await app.send({type: 'getTemporary'});
+  assert.deepEqual(app.getSessionRules(), []);
+  state = await app.send({type: 'grantTemporary', domain: 'example.com', kind: 'visit', tabId: 42, revision: state.revision});
+  app.removedListener(42);
+  await app.send({type: 'getTemporary'});
+  assert.deepEqual(app.getSessionRules(), []);
+});
 
 test('first installation offers setup and saves the chosen rule with its first site', async () => {
   const app = await worker();

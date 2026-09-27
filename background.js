@@ -1,6 +1,7 @@
 import {parseDomains, buildRules} from './policy.mjs';
 import {createPasswordRecord, verifyPassword} from './auth.mjs';
 import {createRulesBackup, validateRulesBackup} from './backup.mjs';
+import {exactDomain, matchesTemporaryDomain, isBlockedByPolicy, nextTemporarySlot, temporaryRules, TEMP_RULE_START, TEMP_DURATION_MS, MAX_TEMP_GRANTS} from './temporary.mjs';
 
 const AUTH_KEY = 'parentPassword';
 const FAILURE_KEY = 'authFailures';
@@ -8,9 +9,80 @@ const SAVED_LISTS_KEY = 'savedModeLists';
 const SUPPORT_KEY = 'allowSupportingResources';
 const STRICT_KEY = 'strictContentSites';
 const GUIDE_KEY = 'guidedSetupPending';
+const TEMP_TIMED_KEY = 'temporaryTimedGrants';
+const TEMP_VISIT_KEY = 'temporaryVisitGrants';
+const TEMP_ALARM = 'temporary-access-expiry';
 const UNLOCK_MS = 5 * 60 * 1000;
 let unlockedUntil = 0;
 let queue = Promise.resolve();
+
+async function temporaryState() {
+  const [local, session] = await Promise.all([
+    chrome.storage.local.get(TEMP_TIMED_KEY), chrome.storage.session.get(TEMP_VISIT_KEY)
+  ]);
+  return {timed: Array.isArray(local[TEMP_TIMED_KEY]) ? local[TEMP_TIMED_KEY] : [],
+    visits: Array.isArray(session[TEMP_VISIT_KEY]) ? session[TEMP_VISIT_KEY] : []};
+}
+
+async function scheduleTemporaryExpiry(timed) {
+  await chrome.alarms.clear(TEMP_ALARM);
+  const next = timed.reduce((min, grant) => Math.min(min, grant.expiresAt), Infinity);
+  if (Number.isFinite(next)) await chrome.alarms.create(TEMP_ALARM, {when: Math.max(Date.now() + 1000, next)});
+}
+
+async function replaceTemporaryGrants(timed, visits) {
+  const before = await temporaryState();
+  const oldRules = (await chrome.declarativeNetRequest.getSessionRules()).filter(rule => rule.id >= TEMP_RULE_START && rule.id < TEMP_RULE_START + MAX_TEMP_GRANTS * 2);
+  const nextRules = [...timed, ...visits].flatMap(temporaryRules);
+  await chrome.declarativeNetRequest.updateSessionRules({removeRuleIds: oldRules.map(rule => rule.id), addRules: nextRules});
+  try {
+    await chrome.storage.local.set({[TEMP_TIMED_KEY]: timed});
+    await chrome.storage.session.set({[TEMP_VISIT_KEY]: visits});
+    await scheduleTemporaryExpiry(timed);
+  } catch (error) {
+    await chrome.declarativeNetRequest.updateSessionRules({removeRuleIds: nextRules.map(rule => rule.id), addRules: oldRules});
+    await chrome.storage.local.set({[TEMP_TIMED_KEY]: before.timed});
+    await chrome.storage.session.set({[TEMP_VISIT_KEY]: before.visits});
+    await scheduleTemporaryExpiry(before.timed);
+    throw error;
+  }
+}
+
+async function reconcileTemporaryGrants() {
+  const {timed, visits} = await temporaryState();
+  const active = timed.filter(grant => grant.expiresAt > Date.now());
+  await replaceTemporaryGrants(active, visits);
+}
+
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name !== TEMP_ALARM) return;
+  queue = queue.then(reconcileTemporaryGrants).catch(error => console.error('Could not expire temporary access:', error));
+});
+chrome.runtime.onStartup.addListener(() => {
+  queue = queue.then(reconcileTemporaryGrants).catch(error => console.error('Could not restore temporary access:', error));
+});
+chrome.webNavigation.onCommitted.addListener(details => {
+  if (details.frameId !== 0) return;
+  queue = queue.then(async () => {
+    const {timed, visits} = await temporaryState();
+    const grant = visits.find(item => item.tabId === details.tabId);
+    if (!grant) return;
+    let host = '';
+    try { const url = new URL(details.url); if (url.protocol === 'http:' || url.protocol === 'https:') host = url.hostname.toLowerCase(); } catch {}
+    if (!matchesTemporaryDomain(host, grant.domain)) {
+      await replaceTemporaryGrants(timed, visits.filter(item => item !== grant));
+    } else if (!grant.started) {
+      await chrome.storage.session.set({[TEMP_VISIT_KEY]: visits.map(item => item === grant ? {...item, started: true} : item)});
+    }
+  }).catch(error => console.error('Could not finish one-visit access:', error));
+});
+chrome.tabs.onRemoved.addListener(tabId => {
+  queue = queue.then(async () => {
+    const {timed, visits} = await temporaryState();
+    if (visits.some(grant => grant.tabId === tabId)) await replaceTemporaryGrants(timed, visits.filter(grant => grant.tabId !== tabId));
+  }).catch(error => console.error('Could not remove one-visit access:', error));
+});
+queue = queue.then(reconcileTemporaryGrants).catch(error => console.error('Could not initialize temporary access:', error));
 
 chrome.action.onClicked.addListener(async tab => {
   let host = '';
@@ -84,7 +156,7 @@ async function recordFailure(failure, now) {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('options.html')) return;
-  if (!['status', 'setup', 'unlock', 'lock', 'read', 'save', 'setMode', 'setSupporting', 'changePassword', 'exportBackup', 'inspectBackup', 'importBackup', 'completeSetup'].includes(message?.type)) return;
+  if (!['status', 'setup', 'unlock', 'read', 'getTemporary', 'lock', 'save', 'setMode', 'setSupporting', 'changePassword', 'exportBackup', 'inspectBackup', 'importBackup', 'completeSetup', 'grantTemporary', 'revokeTemporary'].includes(message?.type)) return;
   const job = queue.then(async () => {
     const stored = await chrome.storage.local.get([AUTH_KEY, FAILURE_KEY]);
     const record = stored[AUTH_KEY];
@@ -115,6 +187,14 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       return {ok: true, configured: Boolean(record), unlocked: false};
     }
     if (!record || now >= unlockedUntil) throw new Error('Settings are locked. Enter the parent password.');
+    if (message.type === 'getTemporary') {
+      let {timed, visits} = await temporaryState();
+      if (timed.some(grant => grant.expiresAt <= Date.now())) {
+        await reconcileTemporaryGrants();
+        ({timed, visits} = await temporaryState());
+      }
+      return {ok: true, temporaryGrants: [...timed, ...visits]};
+    }
     if (message.type === 'changePassword') {
       if (failure.lockedUntil > now) throw new Error('Too many attempts. Settings are temporarily locked.');
       if (!await verifyPassword(message.currentPassword, record)) {
@@ -129,6 +209,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     let rules = await chrome.declarativeNetRequest.getDynamicRules();
     let policy = policyFromRules(rules);
     let strict = await readStrictSites(policy);
+    if (message.type === 'read') {
+      const {timed} = await temporaryState();
+      if (timed.some(grant => grant.expiresAt <= Date.now())) await reconcileTemporaryGrants();
+    }
     let migrationNotice = '';
     const guidedSetupPending = (await chrome.storage.local.get(GUIDE_KEY))[GUIDE_KEY] === true;
     if (message.type === 'completeSetup') {
@@ -242,6 +326,35 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       rules = await chrome.declarativeNetRequest.getDynamicRules();
       policy = policyFromRules(rules);
     }
+    if (message.type === 'grantTemporary' || message.type === 'revokeTemporary') {
+      if (message.revision !== revisionOf(rules, strict)) throw new Error('Settings changed in another tab. Reload before saving.');
+      const {timed, visits} = await temporaryState();
+      if (message.type === 'grantTemporary') {
+        const domain = exactDomain(message.domain);
+        if (!isBlockedByPolicy(domain, policy)) throw new Error('This website is already allowed by your saved rules.');
+        if (timed.some(grant => grant.domain === domain) || visits.some(grant => grant.domain === domain)) throw new Error('This website already has temporary access.');
+        const slot = nextTemporarySlot([...timed, ...visits]);
+        if (message.kind === 'timed') {
+          await replaceTemporaryGrants([...timed, {slot, domain, kind: 'timed', expiresAt: Date.now() + TEMP_DURATION_MS}], visits);
+        } else if (message.kind === 'visit') {
+          const tabId = message.tabId;
+          if (!Number.isSafeInteger(tabId) || tabId < 0) throw new Error('Open this website from its blocked page to allow one visit.');
+          const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+          let blocked;
+          try { blocked = new URL(tab.url); } catch {}
+          const page = new URL(chrome.runtime.getURL('blocked.html'));
+          if (!blocked || blocked.origin !== page.origin || blocked.pathname !== page.pathname || validBlockedHost(blocked.searchParams.get('site')) !== domain) {
+            throw new Error('One visit requires the original blocked website tab. Open its blocked page again.');
+          }
+          if (visits.some(grant => grant.tabId === tabId)) throw new Error('This tab already has one-visit access.');
+          await replaceTemporaryGrants(timed, [...visits, {slot, domain, kind: 'visit', tabId, started: false}]);
+        } else throw new Error('Choose 15 minutes or one visit.');
+      } else {
+        const slot = message.slot;
+        if (!Number.isInteger(slot) || slot < 0 || slot >= MAX_TEMP_GRANTS || ![...timed, ...visits].some(grant => grant.slot === slot)) throw new Error('Select an active temporary access entry.');
+        await replaceTemporaryGrants(timed.filter(grant => grant.slot !== slot), visits.filter(grant => grant.slot !== slot));
+      }
+    }
     let currentSite = '';
     let requestedUrl = '';
     let requestedTabId;
@@ -260,8 +373,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       }
     }
     const savedLists = (await chrome.storage.local.get(SAVED_LISTS_KEY))[SAVED_LISTS_KEY] ?? {};
+    const temporary = await temporaryState();
     unlockedUntil = Date.now() + UNLOCK_MS;
-    return {ok: true, configured: true, unlocked: true, expiresAt: unlockedUntil, ...policy, strictContentSites: strict, revision: revisionOf(rules, strict), currentSite, requestedUrl, requestedTabId, migrationNotice, legacyAllowedBackup: savedLists.legacyAllowedBackup ?? [], guidedSetupPending: message.type === 'completeSetup' ? false : guidedSetupPending};
+    return {ok: true, configured: true, unlocked: true, expiresAt: unlockedUntil, ...policy, strictContentSites: strict, temporaryGrants: [...temporary.timed, ...temporary.visits], revision: revisionOf(rules, strict), currentSite, requestedUrl, requestedTabId, migrationNotice, legacyAllowedBackup: savedLists.legacyAllowedBackup ?? [], guidedSetupPending: message.type === 'completeSetup' ? false : guidedSetupPending};
   });
   queue = job.catch(() => {});
   job.then(respond, error => respond({ok: false, error: error.message}));

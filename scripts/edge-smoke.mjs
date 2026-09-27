@@ -27,8 +27,8 @@ async function evaluate(expression) {
   return result.result.value;
 }
 async function message(value) {return evaluate(`chrome.runtime.sendMessage(${JSON.stringify(value)})`);}
-async function outcome(url, type = 'main_frame', initiator) {
-  return evaluate(`chrome.declarativeNetRequest.testMatchOutcome(${JSON.stringify({url, type, ...(initiator ? {initiator} : {})})})`);
+async function outcome(url, type = 'main_frame', initiator, tabId) {
+  return evaluate(`chrome.declarativeNetRequest.testMatchOutcome(${JSON.stringify({url, type, ...(initiator ? {initiator} : {}), ...(tabId === undefined ? {} : {tabId})})})`);
 }
 try {
   let status;
@@ -143,5 +143,40 @@ try {
   assert.deepEqual(state.strictContentSites, ['example.com']);
   assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.youtube.com')).matchedRules[0]?.ruleId, 202);
   assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 1);
-  console.log('Edge DNR smoke checks passed: both list modes, denied hostname redirect, blocked child exception, strict supporting requests, and return after allowing.');
+  const timed = await message({type: 'grantTemporary', domain: 'temp-only.test', kind: 'timed', revision: state.revision});
+  assert.equal(timed.ok, true, JSON.stringify(timed));
+  assert.equal((await outcome('https://temp-only.test/')).matchedRules[0]?.ruleId, 10000);
+  assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://temp-only.test')).matchedRules[0]?.ruleId, 10001);
+  assert.equal((await message({type: 'revokeTemporary', slot: timed.temporaryGrants[0].slot, revision: state.revision})).ok, true);
+  assert.equal((await outcome('https://temp-only.test/')).matchedRules[0]?.ruleId, 105);
+  const visitTarget = await (await fetch(`http://127.0.0.1:${port}/json/new?https://visit-only.test/`, {method: 'PUT'})).json();
+  let visitBlocked;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    visitBlocked = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(page => page.id === visitTarget.id);
+    if (visitBlocked?.url.includes('/blocked.html')) break;
+  }
+  assert.ok(visitBlocked?.url.includes('/blocked.html'));
+  const visitSocket = new WebSocket(visitBlocked.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {visitSocket.addEventListener('open', resolve, {once: true}); visitSocket.addEventListener('error', reject, {once: true});});
+  const visitId = new Promise((resolve, reject) => visitSocket.addEventListener('message', event => {
+    const response = JSON.parse(event.data);
+    if (response.id !== 1) return;
+    response.error ? reject(new Error(response.error.message)) : resolve(response.result.result.value);
+  }));
+  visitSocket.send(JSON.stringify({id: 1, method: 'Runtime.evaluate', params: {expression: 'chrome.tabs.getCurrent().then(tab => tab.id)', awaitPromise: true, returnByValue: true}}));
+  const visitTabId = await visitId;
+  visitSocket.close();
+  const visitGrant = await message({type: 'grantTemporary', domain: 'visit-only.test', kind: 'visit', tabId: visitTabId, revision: state.revision});
+  assert.equal(visitGrant.ok, true, JSON.stringify(visitGrant));
+  assert.equal((await outcome('https://visit-only.test/', 'main_frame', undefined, visitTabId)).matchedRules[0]?.ruleId, 10000);
+  assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://visit-only.test', visitTabId)).matchedRules[0]?.ruleId, 10001);
+  assert.equal((await outcome('https://visit-only.test/', 'main_frame', undefined, visitTabId + 1000)).matchedRules[0]?.ruleId, 105);
+  await evaluate(`chrome.tabs.remove(${visitTabId})`);
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    if (!(await message({type: 'getTemporary'})).temporaryGrants.length) break;
+  }
+  assert.deepEqual((await message({type: 'getTemporary'})).temporaryGrants, []);
+  console.log('Edge DNR smoke checks passed: both list modes, denied hostname redirect, blocked child exception, per-site content, temporary access, and return after allowing.');
 } finally {socket.close();}

@@ -7,9 +7,11 @@ let mode = 'allow';
 let domains = [];
 let exceptions = [];
 let strictContentSites = [];
+let temporaryGrants = [];
 let revision = '';
 let selected = '';
 let selectedException = '';
+let selectedTemporary = '';
 let currentSite = '';
 let pendingReturn = null;
 let expiresAt = 0;
@@ -41,10 +43,12 @@ function receiveCurrentSite(result) {
   currentSite = result.currentSite || '';
   pendingReturn = result.requestedUrl && Number.isSafeInteger(result.requestedTabId)
     ? {url: result.requestedUrl, tabId: result.requestedTabId} : null;
+  if (currentSite && !$('#temporary-domain').value) $('#temporary-domain').value = currentSite;
+  updateTemporaryKind();
 }
 
-async function openRequestedSite(feedback = '#status') {
-  if (!pendingReturn || !currentSite || !isAllowed(currentSite)) return;
+async function openRequestedSite(feedback = '#status', temporary = false) {
+  if (!pendingReturn || !currentSite || (!temporary && !isAllowed(currentSite))) return;
   const {url, tabId} = pendingReturn;
   let parsed;
   try { parsed = new URL(url); } catch { return; }
@@ -90,6 +94,7 @@ function showLocked(configured, message = '') {
   domains = [];
   exceptions = [];
   strictContentSites = [];
+  temporaryGrants = [];
   networkDrafts.clear();
   revision = '';
   undoDomains = null;
@@ -99,6 +104,7 @@ function showLocked(configured, message = '') {
   pendingReturn = null;
   selected = '';
   selectedException = '';
+  selectedTemporary = '';
   $('#sites').replaceChildren();
   $('#exceptions').replaceChildren();
   $('#supporting-resources').checked = true;
@@ -114,6 +120,9 @@ function showLocked(configured, message = '') {
   $('#related-box').hidden = true;
   $('#exception-status').textContent = '';
   $('#network-status').textContent = '';
+  $('#temporary-form').reset();
+  $('#temporary-list').replaceChildren();
+  $('#temporary-status').textContent = '';
   $('#legacy-backup-list').textContent = '';
   $('#backup-status').textContent = '';
   $('#import-preview').textContent = '';
@@ -244,11 +253,13 @@ function render() {
   $('#rules-panel').hidden = legacy;
   $('#exceptions-panel').hidden = legacy || mode !== 'allow';
   $('#network-panel').hidden = legacy || mode !== 'allow';
+  $('#temporary-panel').hidden = legacy;
   $('#check-panel').hidden = legacy;
   $('#apply-mode').disabled = !legacy && $('#mode-select').value === mode;
   $('#mode-summary').textContent = legacy ? 'Your previous version used both lists. Select one rule to continue.' :
     mode === 'allow' ? `Only websites on this list can open. All others are blocked.${exceptions.length ? ` ${exceptions.length} blocked subdomain ${exceptions.length === 1 ? 'exception is' : 'exceptions are'} active.` : ''}` : 'Websites on this list are blocked. All others can open.';
   if (legacy) return;
+  renderTemporary();
 
   $('#list-title').textContent = mode === 'allow' ? 'Allowed websites' : 'Blocked websites';
   $('#list-description').textContent = mode === 'allow' ? 'These websites and their subdomains can open. You can block specific subdomains below.' : 'These websites and their subdomains cannot open.';
@@ -322,12 +333,40 @@ function render() {
   updatePreview();
 }
 
+function updateTemporaryKind() {
+  const available = Boolean(pendingReturn && currentSite && $('#temporary-domain').value.trim().toLowerCase() === currentSite);
+  const visit = $('#temporary-kind').querySelector('option[value="visit"]');
+  visit.disabled = !available;
+  if (!available && $('#temporary-kind').value === 'visit') $('#temporary-kind').value = 'timed';
+}
+
+function renderTemporary() {
+  const list = $('#temporary-list');
+  list.replaceChildren();
+  for (const grant of temporaryGrants) {
+    const option = document.createElement('option');
+    option.value = String(grant.slot);
+    option.textContent = grant.kind === 'visit'
+      ? siteText('{site} — one visit in its blocked tab', grant.domain)
+      : siteText('{site} — until {time}', grant.domain).replace('{time}', new Date(grant.expiresAt).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}));
+    list.append(option);
+  }
+  list.size = Math.min(7, Math.max(2, temporaryGrants.length));
+  $('#temporary-empty').hidden = temporaryGrants.length > 0;
+  $('#temporary-list-box').hidden = temporaryGrants.length === 0;
+  if (!temporaryGrants.some(grant => String(grant.slot) === selectedTemporary)) selectedTemporary = '';
+  list.value = selectedTemporary;
+  $('#temporary-remove').disabled = !selectedTemporary;
+  updateTemporaryKind();
+}
+
 function applyPolicy(result) {
   mode = result.mode;
   $('#mode-select').value = mode === 'legacy' ? 'allow' : mode;
   domains = [...result.domains];
   exceptions = [...(result.exceptions ?? [])];
   strictContentSites = [...(result.strictContentSites ?? [])];
+  temporaryGrants = [...(result.temporaryGrants ?? [])];
   networkDrafts.clear();
   $('#apply-network').disabled = true;
   revision = result.revision;
@@ -420,6 +459,13 @@ document.addEventListener('visibilitychange', async () => {
 
 chrome.storage?.onChanged?.addListener((changes, areaName) => {
   if (areaName === 'session' && changes.accessLockVersion?.newValue) { if (!settings.hidden) showLocked(true); return; }
+  if ((areaName === 'local' && changes.temporaryTimedGrants) || (areaName === 'session' && changes.temporaryVisitGrants)) {
+    if (!settings.hidden) request({type: 'getTemporary'}).then(result => {
+      temporaryGrants = [...(result.temporaryGrants ?? [])];
+      renderTemporary();
+    }).catch(error => { if (isAccessLockedError(error.message)) showLocked(true, error.message); });
+    return;
+  }
   if (areaName !== 'session' || !changes.pendingSite?.newValue || settings.hidden) return;
   request({type: 'read'}).then(result => {
     if (result.revision !== revision) { undoDomains = null; undoExceptions = null; undoStrict = null; hideUndo(); }
@@ -427,6 +473,7 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
     domains = [...result.domains];
     exceptions = [...(result.exceptions ?? [])];
     strictContentSites = [...(result.strictContentSites ?? [])];
+    temporaryGrants = [...(result.temporaryGrants ?? [])];
     $('#apply-network').disabled = true;
     revision = result.revision;
     render();
@@ -570,6 +617,50 @@ $('#remove-exception').addEventListener('click', async () => {
   selectedException = '';
   if (!await save(domains, `${domain} is no longer blocked as part of an allowed website.`, exceptions.filter(item => item !== domain), domains, exceptions, '#exception-status')) { selectedException = domain; render(); }
 });
+$('#temporary-domain').addEventListener('input', updateTemporaryKind);
+$('#temporary-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (busy) return;
+  const domain = $('#temporary-domain').value.trim().toLowerCase();
+  const kind = $('#temporary-kind').value;
+  const tabId = kind === 'visit' && pendingReturn && domain === currentSite ? pendingReturn.tabId : undefined;
+  busy = true;
+  for (const control of $('#temporary-form').querySelectorAll('button,input,select')) control.disabled = true;
+  try {
+    const result = await request({type: 'grantTemporary', domain, kind, tabId, revision});
+    temporaryGrants = [...result.temporaryGrants];
+    renderTemporary();
+    $('#temporary-status').textContent = kind === 'visit'
+      ? siteText('{site} is allowed in the blocked tab until you leave it or close the tab.', domain)
+      : siteText('{site} is allowed for 15 minutes in any tab.', domain);
+    setExpiry(result.expiresAt);
+    if (pendingReturn && domain === currentSite) await openRequestedSite('#temporary-status', true);
+  } catch (error) {
+    await reportSaveError(error, '#temporary-status');
+  } finally {
+    busy = false;
+    for (const control of $('#temporary-form').querySelectorAll('button,input,select')) control.disabled = false;
+    updateTemporaryKind();
+  }
+});
+$('#temporary-list').addEventListener('change', () => {
+  selectedTemporary = $('#temporary-list').value;
+  $('#temporary-remove').disabled = !selectedTemporary;
+});
+$('#temporary-remove').addEventListener('click', async () => {
+  if (busy || !selectedTemporary) return;
+  busy = true;
+  $('#temporary-remove').disabled = true;
+  try {
+    const result = await request({type: 'revokeTemporary', slot: Number(selectedTemporary), revision});
+    temporaryGrants = [...result.temporaryGrants];
+    selectedTemporary = '';
+    renderTemporary();
+    $('#temporary-status').textContent = uiText('Temporary access ended. Your saved website rules still apply.');
+    setExpiry(result.expiresAt);
+  } catch (error) { await reportSaveError(error, '#temporary-status'); }
+  finally { busy = false; if (!settings.hidden) renderTemporary(); }
+});
 $('#supporting-resources').addEventListener('change', () => {
   const domain = $('#network-site').value;
   const changed = domain && $('#supporting-resources').checked !== !strictContentSites.includes(domain);
@@ -635,6 +726,7 @@ $('#problem-kind').addEventListener('change', () => {
 });
 $('#language').addEventListener('change', () => {
   if ($('#check-result').textContent) queueMicrotask(showCheckResult);
+  queueMicrotask(renderTemporary);
 });
 $('#diagnostic-action').addEventListener('click', async () => {
   const action = diagnosticAction;

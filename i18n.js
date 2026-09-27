@@ -792,6 +792,48 @@
     if (values.length !== siteContentKeys.length) throw new Error(`Site content translation count mismatch: ${code}`);
     Object.assign(translations[code], Object.fromEntries(siteContentKeys.map((key, index) => [key, values[index]])));
   }
+  const temporaryKeys = [
+    'Temporary access', 'Let a blocked website open briefly without changing your saved list. A parent must unlock settings first.',
+    'Blocked website', 'How long?', '15 minutes in any tab', 'One visit in the blocked tab',
+    'One visit is available when you open settings from a blocked page. It ends when that tab leaves the website or closes.',
+    'Allow temporarily', 'Active temporary access', 'No temporary access right now.', 'End selected access'
+  ];
+  const temporaryTranslations = {
+    hi: ['अस्थायी पहुँच', 'सहेजी गई सूची बदले बिना कुछ समय के लिए अवरुद्ध वेबसाइट खोलें। पहले अभिभावक को सेटिंग अनलॉक करनी होगी।', 'अवरुद्ध वेबसाइट', 'कितनी देर?', 'किसी भी टैब में 15 मिनट', 'अवरुद्ध टैब में एक बार', 'एक बार की पहुँच अवरुद्ध पेज से सेटिंग खोलने पर मिलती है। उस टैब में वेबसाइट छोड़ने या टैब बंद करने पर यह समाप्त होती है।', 'अस्थायी अनुमति दें', 'सक्रिय अस्थायी पहुँच', 'अभी कोई अस्थायी पहुँच नहीं है।', 'चुनी हुई पहुँच समाप्त करें'],
+    es: ['Acceso temporal', 'Abre brevemente un sitio bloqueado sin cambiar la lista guardada. Primero, un padre debe desbloquear la configuración.', 'Sitio bloqueado', '¿Por cuánto tiempo?', '15 minutos en cualquier pestaña', 'Una visita en la pestaña bloqueada', 'La visita única está disponible al abrir la configuración desde una página bloqueada. Termina al salir del sitio o cerrar esa pestaña.', 'Permitir temporalmente', 'Acceso temporal activo', 'No hay acceso temporal ahora.', 'Finalizar acceso seleccionado'],
+    fr: ['Accès temporaire', 'Ouvrez brièvement un site bloqué sans modifier votre liste enregistrée. Un parent doit d’abord déverrouiller les réglages.', 'Site bloqué', 'Pour combien de temps ?', '15 minutes dans tous les onglets', 'Une visite dans l’onglet bloqué', 'Une visite est possible en ouvrant les réglages depuis une page bloquée. Elle prend fin quand cet onglet quitte le site ou se ferme.', 'Autoriser temporairement', 'Accès temporaires actifs', 'Aucun accès temporaire actuellement.', 'Terminer l’accès sélectionné'],
+    pt: ['Acesso temporário', 'Abra por pouco tempo um site bloqueado sem mudar a lista salva. Um responsável deve desbloquear as configurações primeiro.', 'Site bloqueado', 'Por quanto tempo?', '15 minutos em qualquer aba', 'Uma visita na aba bloqueada', 'A visita única fica disponível ao abrir as configurações pela página bloqueada. Ela termina quando a aba sai do site ou é fechada.', 'Permitir temporariamente', 'Acesso temporário ativo', 'Nenhum acesso temporário no momento.', 'Encerrar acesso selecionado'],
+    ar: ['وصول مؤقت', 'افتح موقعًا محظورًا لفترة قصيرة دون تغيير قائمتك المحفوظة. يجب على أحد الوالدين فتح الإعدادات أولًا.', 'موقع محظور', 'إلى متى؟', '15 دقيقة في أي علامة تبويب', 'زيارة واحدة في علامة التبويب المحظورة', 'تتوفر الزيارة الواحدة عند فتح الإعدادات من صفحة محظورة. وتنتهي عند مغادرة الموقع أو إغلاق علامة التبويب.', 'السماح مؤقتًا', 'الوصول المؤقت النشط', 'لا يوجد وصول مؤقت الآن.', 'إنهاء الوصول المحدد'],
+    bn: ['অস্থায়ী প্রবেশাধিকার', 'সংরক্ষিত তালিকা না বদলে কিছু সময়ের জন্য ব্লক করা ওয়েবসাইট খুলুন। আগে অভিভাবককে সেটিংস আনলক করতে হবে।', 'ব্লক করা ওয়েবসাইট', 'কতক্ষণ?', 'যেকোনো ট্যাবে ১৫ মিনিট', 'ব্লক করা ট্যাবে একবার', 'ব্লক করা পৃষ্ঠা থেকে সেটিংস খুললে একবারের অনুমতি পাওয়া যায়। ট্যাবটি সাইট ছেড়ে গেলে বা বন্ধ হলে অনুমতি শেষ হয়।', 'সাময়িকভাবে অনুমতি দিন', 'সক্রিয় অস্থায়ী অনুমতি', 'এখন কোনো অস্থায়ী অনুমতি নেই।', 'নির্বাচিত অনুমতি শেষ করুন'],
+    ru: ['Временный доступ', 'Ненадолго откройте заблокированный сайт, не меняя сохранённый список. Сначала родитель должен разблокировать настройки.', 'Заблокированный сайт', 'На какой срок?', '15 минут в любой вкладке', 'Одно посещение в заблокированной вкладке', 'Одно посещение доступно при открытии настроек с заблокированной страницы. Оно заканчивается при уходе с сайта или закрытии вкладки.', 'Разрешить временно', 'Активный временный доступ', 'Сейчас временного доступа нет.', 'Завершить выбранный доступ'],
+    zh: ['临时访问', '无需更改已保存的列表，即可短暂打开被阻止的网站。家长须先解锁设置。', '被阻止的网站', '持续多久？', '任意标签页中使用 15 分钟', '在被阻止的标签页中访问一次', '从被阻止的页面打开设置后，才能选择单次访问。该标签页离开网站或关闭时，访问即结束。', '临时允许', '当前临时访问', '目前没有临时访问。', '结束所选访问'],
+    id: ['Akses sementara', 'Buka situs yang diblokir sebentar tanpa mengubah daftar tersimpan. Orang tua harus membuka pengaturan terlebih dahulu.', 'Situs yang diblokir', 'Berapa lama?', '15 menit di tab mana pun', 'Satu kunjungan di tab yang diblokir', 'Satu kunjungan tersedia saat pengaturan dibuka dari halaman yang diblokir. Akses berakhir saat tab meninggalkan situs atau ditutup.', 'Izinkan sementara', 'Akses sementara aktif', 'Tidak ada akses sementara saat ini.', 'Akhiri akses terpilih']
+  };
+  for (const [code, values] of Object.entries(temporaryTranslations)) {
+    if (values.length !== temporaryKeys.length) throw new Error(`Temporary translation count mismatch: ${code}`);
+    Object.assign(translations[code], Object.fromEntries(temporaryKeys.map((key, index) => [key, values[index]])));
+  }
+  const temporaryDynamicKeys = [
+    '{site} — one visit in its blocked tab', '{site} — until {time}',
+    '{site} is allowed in the blocked tab until you leave it or close the tab.',
+    '{site} is allowed for 15 minutes in any tab.',
+    'Temporary access ended. Your saved website rules still apply.'
+  ];
+  const temporaryDynamicTranslations = {
+    hi: ['{site} — अवरुद्ध टैब में एक बार', '{site} — {time} तक', '{site} अवरुद्ध टैब में वेबसाइट छोड़ने या टैब बंद करने तक अनुमत है।', '{site} किसी भी टैब में 15 मिनट के लिए अनुमत है।', 'अस्थायी पहुँच समाप्त हुई। आपकी सहेजी गई वेबसाइट सेटिंग अब भी लागू हैं।'],
+    es: ['{site} — una visita en la pestaña bloqueada', '{site} — hasta las {time}', '{site} está permitido en la pestaña bloqueada hasta que salgas del sitio o cierres la pestaña.', '{site} está permitido durante 15 minutos en cualquier pestaña.', 'El acceso temporal terminó. Tus reglas guardadas siguen vigentes.'],
+    fr: ['{site} — une visite dans l’onglet bloqué', '{site} — jusqu’à {time}', '{site} est autorisé dans l’onglet bloqué jusqu’à ce que vous quittiez le site ou fermiez l’onglet.', '{site} est autorisé pendant 15 minutes dans tous les onglets.', 'L’accès temporaire est terminé. Vos règles enregistrées restent en vigueur.'],
+    pt: ['{site} — uma visita na aba bloqueada', '{site} — até {time}', '{site} está permitido na aba bloqueada até você sair do site ou fechar a aba.', '{site} está permitido por 15 minutos em qualquer aba.', 'O acesso temporário terminou. Suas regras salvas continuam valendo.'],
+    ar: ['{site} — زيارة واحدة في علامة التبويب المحظورة', '{site} — حتى {time}', 'يُسمح بـ {site} في علامة التبويب المحظورة حتى تغادر الموقع أو تغلقها.', 'يُسمح بـ {site} لمدة 15 دقيقة في أي علامة تبويب.', 'انتهى الوصول المؤقت. تظل قواعد المواقع المحفوظة سارية.'],
+    bn: ['{site} — ব্লক করা ট্যাবে একবার', '{site} — {time} পর্যন্ত', 'সাইট ছেড়ে যাওয়া বা ট্যাব বন্ধ করা পর্যন্ত ব্লক করা ট্যাবে {site} অনুমোদিত।', 'যেকোনো ট্যাবে ১৫ মিনিটের জন্য {site} অনুমোদিত।', 'অস্থায়ী অনুমতি শেষ হয়েছে। আপনার সংরক্ষিত ওয়েবসাইট নিয়ম এখনও কার্যকর।'],
+    ru: ['{site} — одно посещение в заблокированной вкладке', '{site} — до {time}', 'Сайт {site} разрешён в заблокированной вкладке, пока вы не уйдёте с него или не закроете вкладку.', 'Сайт {site} разрешён на 15 минут в любой вкладке.', 'Временный доступ закончился. Сохранённые правила продолжают действовать.'],
+    zh: ['{site} — 在被阻止的标签页中访问一次', '{site} — 至 {time}', '在离开网站或关闭标签页之前，该标签页可访问 {site}。', '任意标签页可访问 {site} 15 分钟。', '临时访问已结束。已保存的网站规则仍然生效。'],
+    id: ['{site} — satu kunjungan di tab yang diblokir', '{site} — hingga {time}', '{site} diizinkan di tab yang diblokir sampai Anda meninggalkan situs atau menutup tab.', '{site} diizinkan selama 15 menit di tab mana pun.', 'Akses sementara berakhir. Aturan situs tersimpan tetap berlaku.']
+  };
+  for (const [code, values] of Object.entries(temporaryDynamicTranslations)) {
+    if (values.length !== temporaryDynamicKeys.length) throw new Error(`Temporary message translation count mismatch: ${code}`);
+    Object.assign(translations[code], Object.fromEntries(temporaryDynamicKeys.map((key, index) => [key, values[index]])));
+  }
   const patterns = [
     [/^Only (.+) and its subdomains can open\. Other websites are blocked\.$/, 'Only {site} and its subdomains can open. Other websites are blocked.', ['site']],
     [/^(.+) and its subdomains will be blocked\. Other websites can open\.$/, '{site} and its subdomains will be blocked. Other websites can open.', ['site']],
