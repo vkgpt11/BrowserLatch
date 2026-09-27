@@ -31,13 +31,17 @@ async function outcome(url, type = 'main_frame', initiator) {
   return evaluate(`chrome.declarativeNetRequest.testMatchOutcome(${JSON.stringify({url, type, ...(initiator ? {initiator} : {})})})`);
 }
 try {
-  const status = await message({type: 'status'});
+  let status;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    try { status = await message({type: 'status'}); if (status?.ok) break; } catch {}
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.ok(status?.ok, 'BrowseLatch options page did not become ready');
   if (!status.configured) assert.equal((await message({type: 'setup', password: 'edge smoke password'})).ok, true);
   else if (!status.unlocked) assert.equal((await message({type: 'unlock', password: 'edge smoke password'})).ok, true);
   let state = await message({type: 'read'});
   if (state.mode === 'block') state = await message({type: 'setMode', mode: 'allow', revision: state.revision});
   assert.equal(state.mode, 'allow');
-  if (!state.supportingResources) state = await message({type: 'setSupporting', enabled: true, revision: state.revision});
   assert.equal((await message({type: 'save', domains: 'co.nz', revision: state.revision})).ok, false);
   state = await message({type: 'save', domains: 'youtube.com', revision: state.revision});
   assert.equal(state.ok, true, JSON.stringify(state));
@@ -77,13 +81,13 @@ try {
   assert.equal((await outcome('https://kids.example.com/logo.png', 'image', 'https://www.example.com')).matchedRules[0]?.ruleId, 106);
   assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 101);
   assert.equal((await outcome('https://signin.test/', 'sub_frame', 'https://www.example.com')).matchedRules[0]?.ruleId, 1);
-  state = await message({type: 'setSupporting', enabled: false, revision: state.revision});
-  assert.equal(state.supportingResources, false);
+  state = await message({type: 'setSupporting', domain: 'example.com', enabled: false, revision: state.revision});
+  assert.deepEqual(state.strictContentSites, ['example.com']);
   assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 1);
   assert.equal((await outcome('https://www.example.com/logo.png', 'image', 'https://www.example.com')).matchedRules[0]?.ruleId, 100);
   state = await message({type: 'setMode', mode: 'block', revision: state.revision});
   state = await message({type: 'setMode', mode: 'allow', revision: state.revision});
-  assert.equal(state.supportingResources, false);
+  assert.deepEqual(state.strictContentSites, ['example.com']);
   assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 1);
   await call('Page.reload');
   await new Promise(resolve => setTimeout(resolve, 500));
@@ -120,7 +124,7 @@ try {
   blockedSocket.send(JSON.stringify({id: 1, method: 'Runtime.evaluate', params: {expression: "document.querySelector('#manage').click()", returnByValue: true}}));
   await clicked;
   blockedSocket.close();
-  for (let attempt = 0; attempt < 40; attempt++) {
+  for (let attempt = 0; attempt < 100; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 100));
     if (await evaluate("document.querySelector('#current-site-domain').textContent") === 'www.example.net') break;
   }
@@ -134,5 +138,10 @@ try {
     if (returnedUrl === requestedUrl) break;
   }
   assert.equal(returnedUrl, requestedUrl, 'Allowing the site should reopen its exact page');
+  state = await message({type: 'read'});
+  state = await message({type: 'save', domains: 'example.com\nsignin.test\nyoutube.com\nwww.example.net', exceptions: 'kids.example.com', revision: state.revision});
+  assert.deepEqual(state.strictContentSites, ['example.com']);
+  assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.youtube.com')).matchedRules[0]?.ruleId, 202);
+  assert.equal((await outcome('https://cdn.test/video', 'xmlhttprequest', 'https://www.example.com')).matchedRules[0]?.ruleId, 1);
   console.log('Edge DNR smoke checks passed: both list modes, denied hostname redirect, blocked child exception, strict supporting requests, and return after allowing.');
 } finally {socket.close();}

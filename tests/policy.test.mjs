@@ -87,6 +87,19 @@ test('strict content setting removes the unlisted supporting-request exemption',
   assert.throws(() => buildRules(['youtube.com'], 'allow', BLOCKED_PAGE, [], 'false'));
 });
 
+test('per-site content choices respect the most specific allowed domain', () => {
+  const domains = ['example.com', 'school.example.com', 'video.school.example.com'];
+  const rules = buildRules(domains, 'allow', BLOCKED_PAGE, [], ['school.example.com']);
+  const support = rules.filter(rule => rule.condition.initiatorDomains);
+  assert.deepEqual(support.map(rule => rule.condition.initiatorDomains[0]), ['example.com', 'video.school.example.com']);
+  assert.deepEqual(support[0].condition.excludedInitiatorDomains, ['school.example.com']);
+  assert.equal(support[1].condition.excludedInitiatorDomains, undefined);
+  assert.equal(new Set(rules.map(rule => rule.id)).size, rules.length);
+  const fresh = buildRules(['example.com', 'youtube.com'], 'allow', BLOCKED_PAGE);
+  assert.equal(fresh.filter(rule => rule.condition.initiatorDomains).length, 2);
+  assert.throws(() => buildRules(['example.com'], 'allow', BLOCKED_PAGE, [], ['other.test']));
+});
+
 test('backup accepts only valid website rules and never includes password data', () => {
   const backup = createRulesBackup({mode: 'allow', domains: ['example.com'], exceptions: ['kids.example.com']}, {block: ['games.test']}, false);
   assert.deepEqual(backup.allowlist, ['example.com']);
@@ -94,9 +107,12 @@ test('backup accepts only valid website rules and never includes password data',
   assert.deepEqual(backup.blockedSubdomains, ['kids.example.com']);
   assert.equal(JSON.stringify(backup).includes('password'), false);
   assert.deepEqual(validateRulesBackup(backup), backup);
+  const oldBackup = {format: 'browselatch-rules', version: 1, mode: 'allow', allowlist: ['example.com'], blocklist: [], blockedSubdomains: [], allowSupportingResources: false};
+  assert.deepEqual(validateRulesBackup(oldBackup).strictContentSites, ['example.com']);
+  assert.deepEqual(validateRulesBackup({...oldBackup, allowSupportingResources: true}).strictContentSites, []);
   for (const change of [
-    {version: 2}, {allowlist: ['com']}, {allowlist: ['https://example.com']},
-    {blockedSubdomains: ['other.test']}, {allowSupportingResources: 'false'},
+    {version: 3}, {allowlist: ['com']}, {allowlist: ['https://example.com']},
+    {blockedSubdomains: ['other.test']}, {strictContentSites: ['other.test']},
     {parentPassword: 'secret'}
   ]) assert.throws(() => validateRulesBackup({...backup, ...change}));
 });
@@ -177,7 +193,7 @@ test('backup moves both lists to a new profile without moving its password', asy
   await source.send({type: 'setup', password: 'source passphrase'});
   let state = await source.send({type: 'read'});
   state = await source.send({type: 'save', domains: 'example.com', exceptions: 'kids.example.com', revision: state.revision});
-  state = await source.send({type: 'setSupporting', enabled: false, revision: state.revision});
+  state = await source.send({type: 'setSupporting', domain: 'example.com', enabled: false, revision: state.revision});
   state = await source.send({type: 'setMode', mode: 'block', revision: state.revision});
   state = await source.send({type: 'save', domains: 'games.test', revision: state.revision});
   const exported = await source.send({type: 'exportBackup'});
@@ -185,7 +201,7 @@ test('backup moves both lists to a new profile without moving its password', asy
   assert.deepEqual([...exported.backup.allowlist], ['example.com']);
   assert.deepEqual([...exported.backup.blocklist], ['games.test']);
   assert.deepEqual([...exported.backup.blockedSubdomains], ['kids.example.com']);
-  assert.equal(exported.backup.allowSupportingResources, false);
+  assert.deepEqual([...exported.backup.strictContentSites], ['example.com']);
   assert.equal(JSON.stringify(exported.backup).includes('source passphrase'), false);
 
   const target = await worker();
@@ -198,7 +214,7 @@ test('backup moves both lists to a new profile without moving its password', asy
   assert.equal(state.ok, true);
   assert.equal(state.mode, 'block');
   assert.deepEqual([...state.domains], ['games.test']);
-  assert.equal(state.supportingResources, false);
+  assert.deepEqual([...state.strictContentSites], ['example.com']);
   assert.equal(JSON.stringify(target.local.parentPassword), targetPassword);
   state = await target.send({type: 'setMode', mode: 'allow', revision: state.revision});
   assert.deepEqual([...state.domains], ['example.com']);
@@ -233,10 +249,10 @@ test('worker requires a password, rejects stale saves, and preserves lists when 
   const oldRevision = state.revision;
   state = await app.send({type: 'save', domains: 'youtube.com', revision: state.revision});
   assert.deepEqual([...state.domains], ['youtube.com']);
-  state = await app.send({type: 'setSupporting', enabled: false, revision: state.revision});
-  assert.equal(state.supportingResources, false);
+  state = await app.send({type: 'setSupporting', domain: 'youtube.com', enabled: false, revision: state.revision});
+  assert.deepEqual([...state.strictContentSites], ['youtube.com']);
   assert.deepEqual(app.getRules().map(rule => rule.id), [105, 100]);
-  assert.equal((await app.send({type: 'setSupporting', enabled: 'false', revision: state.revision})).ok, false);
+  assert.equal((await app.send({type: 'setSupporting', domain: 'youtube.com', enabled: 'false', revision: state.revision})).ok, false);
   assert.equal((await app.send({type: 'save', domains: 'other.test', revision: oldRevision})).ok, false);
   assert.deepEqual([...(await app.send({type: 'read'})).domains], ['youtube.com']);
   state = await app.send({type: 'setMode', mode: 'block', revision: state.revision});
@@ -247,7 +263,7 @@ test('worker requires a password, rejects stale saves, and preserves lists when 
   state = await app.send({type: 'save', domains: 'bad.test', revision: state.revision});
   state = await app.send({type: 'setMode', mode: 'allow', revision: state.revision});
   assert.deepEqual([...state.domains], ['youtube.com']);
-  assert.equal(state.supportingResources, false);
+  assert.deepEqual([...state.strictContentSites], ['youtube.com']);
   assert.deepEqual(app.getRules().map(rule => rule.id), [105, 100]);
   state = await app.send({type: 'setMode', mode: 'block', revision: state.revision});
   assert.deepEqual([...state.domains], ['bad.test']);
@@ -353,4 +369,10 @@ test('installation adds hostname redirects and update keeps mixed legacy lists',
   strict.local.allowSupportingResources = false;
   await strict.installedListener({reason: 'update'});
   assert.deepEqual(strict.getRules().map(rule => rule.id), [105, 100]);
+  assert.deepEqual([...strict.local.strictContentSites], ['youtube.com']);
+  await strict.send({type: 'setup', password: 'parent passphrase'});
+  const before = await strict.send({type: 'read'});
+  const after = await strict.send({type: 'save', domains: 'new.test\nyoutube.com', revision: before.revision});
+  assert.deepEqual([...after.strictContentSites], ['youtube.com']);
+  assert.deepEqual(strict.getRules().find(rule => rule.condition.initiatorDomains)?.condition.initiatorDomains, ['new.test']);
 });

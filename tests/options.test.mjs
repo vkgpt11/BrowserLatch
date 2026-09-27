@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {JSDOM} from 'jsdom';
 import {parseDomains} from '../policy.mjs';
+import {validateRulesBackup} from '../backup.mjs';
 
 const html = await readFile(new URL('../options.html', import.meta.url), 'utf8');
 const script = await readFile(new URL('../options.js', import.meta.url), 'utf8');
@@ -10,30 +11,32 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 const openWindows = new Set();
 test.afterEach(() => { for (const window of openWindows) window.close(); openWindows.clear(); });
 
-async function createPage({mode = 'allow', domains = [], exceptions = [], supportingResources = true, currentSite = '', requestedUrl = '', legacyAllowed = [], legacyBlocked = [], guidedSetupPending = false, expiryOffsetMs = 300000} = {}) {
+async function createPage({mode = 'allow', domains = [], exceptions = [], supportingResources = true, strictContentSites = supportingResources ? [] : domains, currentSite = '', requestedUrl = '', legacyAllowed = [], legacyBlocked = [], guidedSetupPending = false, expiryOffsetMs = 300000} = {}) {
   const dom = new JSDOM(html, {url: 'https://extension.test/options.html', runScripts: 'outside-only'});
   openWindows.add(dom.window);
-  const state = {mode, domains, exceptions, supportingResources, currentSite, requestedUrl, openTabUrl: 'chrome-extension://unit-test/blocked.html?site=' + currentSite, navigated: [], legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, guidedSetupPending, expiryOffsetMs};
+  const state = {mode, domains, exceptions, strictContentSites, currentSite, requestedUrl, openTabUrl: 'chrome-extension://unit-test/blocked.html?site=' + currentSite, navigated: [], legacyAllowed, legacyBlocked, saved: {allow: [], block: [], allowExceptions: []}, revision: 1, unlocked: true, failSave: false, guidedSetupPending, expiryOffsetMs};
   let onStorageChanged;
   dom.window.confirm = () => true;
   dom.window.chrome = {storage: {onChanged: {addListener(fn) {onStorageChanged = fn;}}}, tabs: {get: async () => ({url: state.openTabUrl}), update: async (id, value) => {state.navigated.push({id, url: value.url});}}, runtime: {getURL: path => `chrome-extension://unit-test/${path}`, sendMessage: async message => {
     if (message.type === 'status') return {ok: true, configured: true, unlocked: state.unlocked, expiresAt: Date.now() + state.expiryOffsetMs};
-    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'read') return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, strictContentSites: state.strictContentSites, revision: String(state.revision), currentSite: state.currentSite, requestedUrl: state.requestedUrl, requestedTabId: state.requestedUrl ? 42 : undefined, legacyAllowed: state.legacyAllowed, legacyBlocked: state.legacyBlocked, guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.type === 'lock') {state.unlocked = false; return {ok: true};}
     if (!state.unlocked) return {ok: false, error: 'Settings are locked.'};
-    if (message.type === 'inspectBackup') return {ok: true, backup: message.backup, expiresAt: Date.now() + state.expiryOffsetMs};
-    if (message.type === 'exportBackup') return {ok: true, backup: {format: 'browselatch-rules', version: 1, mode: state.mode, allowlist: state.mode === 'allow' ? state.domains : state.saved.allow, blocklist: state.mode === 'block' ? state.domains : state.saved.block, blockedSubdomains: state.exceptions, allowSupportingResources: state.supportingResources}, expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'inspectBackup') return {ok: true, backup: validateRulesBackup(message.backup), expiresAt: Date.now() + state.expiryOffsetMs};
+    if (message.type === 'exportBackup') return {ok: true, backup: {format: 'browselatch-rules', version: 2, mode: state.mode, allowlist: state.mode === 'allow' ? state.domains : state.saved.allow, blocklist: state.mode === 'block' ? state.domains : state.saved.block, blockedSubdomains: state.exceptions, strictContentSites: state.strictContentSites}, expiresAt: Date.now() + state.expiryOffsetMs};
     if (message.revision !== String(state.revision)) return {ok: false, error: 'The list changed in another tab. Reload settings before saving.'};
     if (message.type === 'save') {
       if (state.failSave) return {ok: false, error: 'Rejected update'};
       try { const nextDomains = parseDomains(message.domains); const nextExceptions = parseDomains(message.exceptions ?? '');
         if (nextExceptions.some(child => !nextDomains.some(parent => child !== parent && child.endsWith(`.${parent}`)))) throw new Error('Each blocked exception must be below an allowed parent domain.');
-        state.domains = nextDomains; state.exceptions = nextExceptions; }
+        const nextStrict = message.strictContentSites === undefined ? state.strictContentSites.filter(site => nextDomains.includes(site)) : parseDomains(message.strictContentSites);
+        if (state.mode === 'allow' && nextStrict.some(site => !nextDomains.includes(site))) throw new Error('A content choice has no allowed website.');
+        state.domains = nextDomains; state.exceptions = nextExceptions; state.strictContentSites = nextStrict; }
       catch (error) { return {ok: false, error: error.message}; }
       state.revision++;
     } else if (message.type === 'setSupporting') {
-      if (state.mode !== 'allow' || typeof message.enabled !== 'boolean') return {ok: false, error: 'Invalid setting.'};
-      state.supportingResources = message.enabled;
+      if (state.mode !== 'allow' || !state.domains.includes(message.domain) || typeof message.enabled !== 'boolean') return {ok: false, error: 'Invalid setting.'};
+      state.strictContentSites = message.enabled ? state.strictContentSites.filter(site => site !== message.domain) : [...state.strictContentSites, message.domain];
       state.revision++;
     } else if (message.type === 'completeSetup') {
       if (!state.guidedSetupPending) return {ok: false, error: 'The first-time setup is already complete.'};
@@ -47,7 +50,7 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
       state.saved = {allow: message.backup.allowlist, block: message.backup.blocklist, allowExceptions: message.backup.blockedSubdomains};
       state.domains = [...state.saved[state.mode]];
       state.exceptions = state.mode === 'allow' ? [...state.saved.allowExceptions] : [];
-      state.supportingResources = message.backup.allowSupportingResources;
+      state.strictContentSites = [...message.backup.strictContentSites];
       state.revision++;
     } else if (message.type === 'setMode') {
       if (state.mode === 'legacy') {state.saved.allow = [...state.legacyAllowed]; state.saved.block = [...state.legacyBlocked];
@@ -58,7 +61,7 @@ async function createPage({mode = 'allow', domains = [], exceptions = [], suppor
       state.exceptions = state.mode === 'allow' ? [...state.saved.allowExceptions] : [];
       state.revision++;
     } else return {ok: false, error: `Unexpected message: ${message.type}`};
-    return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, supportingResources: state.supportingResources, revision: String(state.revision), currentSite: '', guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
+    return {ok: true, mode: state.mode, domains: state.domains, exceptions: state.exceptions, strictContentSites: state.strictContentSites, revision: String(state.revision), currentSite: '', guidedSetupPending: state.guidedSetupPending, expiresAt: Date.now() + state.expiryOffsetMs};
   }}};
   dom.window.eval(script);
   await settle();
@@ -139,7 +142,7 @@ test('diagnostic checks strict supporting content and refreshes after its settin
   fire('#supporting-resources', 'change');
   fire('#network-form', 'submit');
   await settle();
-  assert.equal(state.supportingResources, true);
+  assert.deepEqual(state.strictContentSites, []);
   assert.match($('#diagnosis').textContent, /is allowed under these rules/);
   assert.equal($('#diagnostic-action').hidden, true);
 });
@@ -227,7 +230,7 @@ test('import previews both lists and replaces them only after confirmation', asy
   assert.equal(state.mode, 'block');
   assert.deepEqual(state.domains, ['games.test']);
   assert.deepEqual([...state.saved.allow], ['youtube.com']);
-  assert.equal(state.supportingResources, false);
+  assert.deepEqual(state.strictContentSites, ['youtube.com']);
   assert.match($('#backup-status').textContent, /password was not changed/);
   assert.equal($('#import-rules').disabled, true);
 });
@@ -372,21 +375,35 @@ test('empty blocked-parts list uses a message and reveals controls only after an
   page.dom.window.close();
 });
 
-test('parent can switch supporting requests between compatibility and strict behavior', async () => {
-  const page = await createPage({domains: ['youtube.com']});
+test('parent chooses supporting content separately for each website and drafts survive unrelated edits', async () => {
+  const page = await createPage({domains: ['school.example', 'youtube.com']});
   const {$, fire, state} = page;
   assert.equal($('#network-panel').hidden, false);
+  assert.equal($('#network-site').value, 'school.example');
   assert.equal($('#supporting-resources').checked, true);
   assert.equal($('#apply-network').disabled, true);
   $('#supporting-resources').checked = false;
   fire('#supporting-resources', 'change');
   assert.equal($('#apply-network').disabled, false);
+  $('#search').value = 'youtube';
+  fire('#search', 'input');
+  assert.equal($('#supporting-resources').checked, false);
+  assert.equal($('#apply-network').disabled, false);
   assert.match($('#network-status').textContent, /Save change/);
   fire('#network-form', 'submit');
   await settle();
-  assert.equal(state.supportingResources, false);
+  assert.deepEqual(state.strictContentSites, ['school.example']);
   assert.equal($('#apply-network').disabled, true);
   assert.match($('#network-status').textContent, /Extra content from other websites is blocked/);
+  $('#network-site').value = 'youtube.com';
+  fire('#network-site', 'change');
+  assert.equal($('#supporting-resources').checked, true);
+  $('#new-domain').value = 'new.test';
+  fire('#add-form', 'submit');
+  await settle();
+  $('#network-site').value = 'new.test';
+  fire('#network-site', 'change');
+  assert.equal($('#supporting-resources').checked, true);
   $('#mode-select').value = 'block';
   fire('#mode-form', 'submit');
   await settle();
@@ -394,6 +411,8 @@ test('parent can switch supporting requests between compatibility and strict beh
   $('#mode-select').value = 'allow';
   fire('#mode-form', 'submit');
   await settle();
+  $('#network-site').value = 'school.example';
+  fire('#network-site', 'change');
   assert.equal($('#supporting-resources').checked, false);
   page.dom.window.close();
 });

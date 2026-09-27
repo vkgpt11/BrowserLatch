@@ -771,6 +771,27 @@
     if (values.length !== diagnosticSiteKeys.length) throw new Error(`Diagnostic site translation count mismatch: ${code}`);
     Object.assign(translations[code], Object.fromEntries(diagnosticSiteKeys.map((key, index) => [key, values[index]])));
   }
+  const siteContentKeys = [
+    'What is this option? An allowed website may need images, video, scripts, or data from websites outside your allowed list. Turn this on for that website to help its features work. It does not let someone visit those other websites directly.',
+    'Add an allowed website first to choose its content setting.',
+    'Allowed website',
+    'Allow content from unlisted websites for this website (on by default)'
+  ];
+  const siteContentTranslations = {
+    hi: ['यह विकल्प क्या है? किसी अनुमत वेबसाइट को दूसरी वेबसाइटों से चित्र, वीडियो, स्क्रिप्ट या डेटा चाहिए हो सकता है। उसके काम करने में मदद के लिए इसे चालू करें। इससे उन दूसरी वेबसाइटों पर सीधे जाना संभव नहीं होता।', 'पहले कोई अनुमत वेबसाइट जोड़ें, फिर उसकी सामग्री सेटिंग चुनें।', 'अनुमत वेबसाइट', 'इस वेबसाइट के लिए दूसरी वेबसाइटों की सामग्री आने दें (डिफ़ॉल्ट रूप से चालू)'],
+    es: ['¿Qué hace esta opción? Un sitio permitido puede necesitar imágenes, videos, scripts o datos de otros sitios. Actívala para ese sitio si ayuda a que funcione. No permite visitar esos otros sitios directamente.', 'Agrega primero un sitio permitido para elegir su configuración de contenido.', 'Sitio permitido', 'Permitir contenido de otros sitios para este sitio (activado de forma predeterminada)'],
+    fr: ['À quoi sert cette option ? Un site autorisé peut avoir besoin d’images, de vidéos, de scripts ou de données provenant d’autres sites. Activez-la pour aider ce site à fonctionner. Elle ne permet pas de visiter directement ces autres sites.', 'Ajoutez d’abord un site autorisé pour choisir son réglage de contenu.', 'Site autorisé', 'Autoriser le contenu d’autres sites pour ce site (activé par défaut)'],
+    pt: ['O que é esta opção? Um site permitido pode precisar de imagens, vídeos, scripts ou dados de outros sites. Ative-a para ajudar esse site a funcionar. Isso não permite visitar esses outros sites diretamente.', 'Adicione primeiro um site permitido para escolher a configuração de conteúdo.', 'Site permitido', 'Permitir conteúdo de outros sites para este site (ativado por padrão)'],
+    ar: ['ما هذا الخيار؟ قد يحتاج موقع مسموح به إلى صور أو فيديو أو نصوص برمجية أو بيانات من مواقع أخرى. فعّله لهذا الموقع لمساعدة ميزاته على العمل. لا يسمح بزيارة تلك المواقع الأخرى مباشرة.', 'أضف موقعًا مسموحًا به أولًا لاختيار إعداد المحتوى له.', 'موقع مسموح به', 'السماح بمحتوى من مواقع أخرى لهذا الموقع (مفعّل افتراضيًا)'],
+    bn: ['এই বিকল্পটি কী? অনুমোদিত ওয়েবসাইটের ছবি, ভিডিও, স্ক্রিপ্ট বা ডেটা অন্য সাইট থেকে আসতে পারে। সাইটটির ফিচার চালাতে এটি চালু করুন। এতে অন্য সাইটগুলো সরাসরি দেখা যাবে না।', 'কনটেন্ট সেটিং বেছে নিতে আগে একটি অনুমোদিত ওয়েবসাইট যোগ করুন।', 'অনুমোদিত ওয়েবসাইট', 'এই ওয়েবসাইটের জন্য অন্য সাইটের কনটেন্ট অনুমোদন করুন (ডিফল্টভাবে চালু)'],
+    ru: ['Что делает эта настройка? Разрешённому сайту могут понадобиться изображения, видео, скрипты или данные с других сайтов. Включите её для этого сайта, чтобы его функции работали. Она не разрешает открывать другие сайты напрямую.', 'Сначала добавьте разрешённый сайт, чтобы выбрать для него настройку содержимого.', 'Разрешённый сайт', 'Разрешить содержимое других сайтов для этого сайта (включено по умолчанию)'],
+    zh: ['此选项有什么作用？允许的网站可能需要其他网站提供的图片、视频、脚本或数据。为该网站开启此选项有助于其功能正常运行。它不会允许直接访问那些其他网站。', '请先添加一个允许的网站，再选择其内容设置。', '允许的网站', '允许此网站加载其他网站的内容（默认开启）'],
+    id: ['Apa fungsi opsi ini? Situs yang diizinkan mungkin memerlukan gambar, video, skrip, atau data dari situs lain. Aktifkan untuk situs tersebut agar fiturnya berfungsi. Ini tidak mengizinkan kunjungan langsung ke situs lain itu.', 'Tambahkan situs yang diizinkan terlebih dahulu untuk memilih pengaturan kontennya.', 'Situs yang diizinkan', 'Izinkan konten dari situs lain untuk situs ini (aktif secara bawaan)']
+  };
+  for (const [code, values] of Object.entries(siteContentTranslations)) {
+    if (values.length !== siteContentKeys.length) throw new Error(`Site content translation count mismatch: ${code}`);
+    Object.assign(translations[code], Object.fromEntries(siteContentKeys.map((key, index) => [key, values[index]])));
+  }
   const patterns = [
     [/^Only (.+) and its subdomains can open\. Other websites are blocked\.$/, 'Only {site} and its subdomains can open. Other websites are blocked.', ['site']],
     [/^(.+) and its subdomains will be blocked\. Other websites can open\.$/, '{site} and its subdomains will be blocked. Other websites can open.', ['site']],

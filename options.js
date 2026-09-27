@@ -6,7 +6,7 @@ const authCard = $('#auth-card');
 let mode = 'allow';
 let domains = [];
 let exceptions = [];
-let supportingResources = true;
+let strictContentSites = [];
 let revision = '';
 let selected = '';
 let selectedException = '';
@@ -16,9 +16,11 @@ let expiresAt = 0;
 let lockTimer;
 let undoDomains = null;
 let undoExceptions = null;
+let undoStrict = null;
 let busy = false;
 let pendingBackup = null;
 let diagnosticAction = null;
+const networkDrafts = new Map();
 
 function hideUndo() { $('#undo').hidden = true; $('#undo-exception').hidden = true; }
 const isAccessLockedError = message => /^Settings are locked\.|^Too many attempts\. Settings are temporarily locked\./i.test(message);
@@ -28,6 +30,11 @@ const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${dom
 function isAllowed(host) {
   const listed = domains.some(domain => matchesDomain(host, domain));
   return mode === 'allow' ? listed && !exceptions.some(domain => matchesDomain(host, domain)) : mode === 'block' && !listed;
+}
+
+function supportsOutsideContent(host) {
+  const match = domains.filter(domain => matchesDomain(host, domain)).sort((a, b) => b.length - a.length)[0];
+  return match ? !strictContentSites.includes(match) : false;
 }
 
 function receiveCurrentSite(result) {
@@ -82,10 +89,12 @@ function showLocked(configured, message = '') {
   expiresAt = 0;
   domains = [];
   exceptions = [];
-  supportingResources = true;
+  strictContentSites = [];
+  networkDrafts.clear();
   revision = '';
   undoDomains = null;
   undoExceptions = null;
+  undoStrict = null;
   currentSite = '';
   pendingReturn = null;
   selected = '';
@@ -93,6 +102,8 @@ function showLocked(configured, message = '') {
   $('#sites').replaceChildren();
   $('#exceptions').replaceChildren();
   $('#supporting-resources').checked = true;
+  $('#network-site').replaceChildren();
+  $('#apply-network').disabled = true;
   $('#status').textContent = '';
   $('#check-result').textContent = '';
   $('#diagnosis').textContent = '';
@@ -183,9 +194,9 @@ function showCheckResult() {
     const otherInput = $('#related-domain').value.trim();
     if (!otherInput) {
       if (kind === 'frame') $('#diagnosis').textContent = 'The main website can open. An embedded sign-in or payment page may use another website. Enter that domain above if you know it. BrowseLatch cannot identify it from this page alone.';
-      else if (mode === 'allow' && !supportingResources) {
+      else if (mode === 'allow' && !supportsOutsideContent(host)) {
         $('#diagnosis').textContent = 'The main website can open, but content from unlisted websites is blocked. Review the content setting, or enter a content domain to check it.';
-        setDiagnosticAction({type: 'reviewSupporting'});
+        setDiagnosticAction({type: 'reviewSupporting', domain: matchingDomain(host, domains)});
       } else $('#diagnosis').textContent = 'The main website can open. Enter the domain used by the missing content if you know it; BrowseLatch cannot identify it from this page alone.';
       return;
     }
@@ -204,7 +215,7 @@ function showCheckResult() {
     if (explicitlyBlocked) {
       $('#diagnosis').textContent = siteText('Content from {site} is blocked. Removing this block also affects its subdomains.', other);
       setDiagnosticAction(blockedAction(other, true));
-    } else if (mode === 'allow' && !isAllowed(other) && !supportingResources) {
+    } else if (mode === 'allow' && !isAllowed(other) && !supportsOutsideContent(host)) {
       $('#diagnosis').textContent = siteText('Content from {site} is blocked by the content setting. Allowing this site also permits direct visits.', other);
       setDiagnosticAction(blockedAction(other, true));
     } else $('#diagnosis').textContent = siteText('Content from {site} is allowed under these rules. The problem may have another cause.', other);
@@ -244,7 +255,20 @@ function render() {
   $('#count').textContent = `${domains.length} ${domains.length === 1 ? 'website' : 'websites'}`;
   $('#add-label').textContent = mode === 'allow' ? 'Website to allow' : 'Website to block';
   $('#add').textContent = mode === 'allow' ? 'Allow website' : 'Block website';
-  $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources;
+  const sitePicker = $('#network-site');
+  const previousSite = sitePicker.value;
+  sitePicker.replaceChildren();
+  for (const domain of domains) {
+    const option = document.createElement('option');
+    option.value = domain;
+    option.textContent = domain;
+    sitePicker.append(option);
+  }
+  sitePicker.value = domains.includes(previousSite) ? previousSite : domains[0] ?? '';
+  $('#supporting-resources').checked = networkDrafts.has(sitePicker.value) ? networkDrafts.get(sitePicker.value) : !strictContentSites.includes(sitePicker.value);
+  $('#apply-network').disabled = !sitePicker.value || !networkDrafts.has(sitePicker.value);
+  $('#network-empty').hidden = domains.length > 0;
+  $('#network-form').hidden = domains.length === 0;
   const exceptionList = $('#exceptions');
   exceptionList.replaceChildren();
   exceptionList.hidden = !exceptions.length;
@@ -303,11 +327,13 @@ function applyPolicy(result) {
   $('#mode-select').value = mode === 'legacy' ? 'allow' : mode;
   domains = [...result.domains];
   exceptions = [...(result.exceptions ?? [])];
-  supportingResources = result.supportingResources ?? true;
-  $('#supporting-resources').checked = supportingResources;
+  strictContentSites = [...(result.strictContentSites ?? [])];
+  networkDrafts.clear();
+  $('#apply-network').disabled = true;
   revision = result.revision;
   undoDomains = null;
   undoExceptions = null;
+  undoStrict = null;
   hideUndo();
   $('#status').textContent = '';
   $('#exception-status').textContent = '';
@@ -345,18 +371,21 @@ async function reportSaveError(error, feedback) {
   $(feedback).textContent = `Not saved: ${error.message}`;
 }
 
-async function save(next, message, nextExceptions = exceptions, previous = domains, previousExceptions = exceptions, feedback = '#status') {
+async function save(next, message, nextExceptions = exceptions, previous = domains, previousExceptions = exceptions, feedback = '#status', nextStrict = strictContentSites.filter(site => next.includes(site))) {
   if (busy) return false;
   busy = true;
   for (const control of settings.querySelectorAll('button,input,select')) control.disabled = true;
   try {
-    const result = await request({type: 'save', domains: next.join('\n'), exceptions: nextExceptions.join('\n'), revision});
+    const priorStrict = [...strictContentSites];
+    const result = await request({type: 'save', domains: next.join('\n'), exceptions: nextExceptions.join('\n'), ...(mode === 'allow' ? {strictContentSites: nextStrict.join('\n')} : {}), revision});
     domains = result.domains;
     exceptions = result.exceptions;
-    supportingResources = result.supportingResources ?? true;
+    strictContentSites = [...(result.strictContentSites ?? [])];
+    for (const site of networkDrafts.keys()) if (!domains.includes(site)) networkDrafts.delete(site);
     revision = result.revision;
     undoDomains = [...previous];
     undoExceptions = [...previousExceptions];
+    undoStrict = priorStrict;
     hideUndo();
     $(feedback === '#exception-status' ? '#undo-exception' : '#undo').hidden = false;
     render();
@@ -377,7 +406,7 @@ async function save(next, message, nextExceptions = exceptions, previous = domai
     $('#apply-mode').disabled = mode !== 'legacy' && $('#mode-select').value === mode;
     $('#remove').disabled = !selected;
     $('#remove-exception').disabled = !selectedException;
-    $('#apply-network').disabled = $('#supporting-resources').checked === supportingResources;
+    $('#apply-network').disabled = !networkDrafts.has($('#network-site').value);
   }
 }
 
@@ -393,12 +422,12 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
   if (areaName === 'session' && changes.accessLockVersion?.newValue) { if (!settings.hidden) showLocked(true); return; }
   if (areaName !== 'session' || !changes.pendingSite?.newValue || settings.hidden) return;
   request({type: 'read'}).then(result => {
-    if (result.revision !== revision) { undoDomains = null; undoExceptions = null; hideUndo(); }
+    if (result.revision !== revision) { undoDomains = null; undoExceptions = null; undoStrict = null; hideUndo(); }
     receiveCurrentSite(result);
     domains = [...result.domains];
     exceptions = [...(result.exceptions ?? [])];
-    supportingResources = result.supportingResources ?? true;
-    $('#supporting-resources').checked = supportingResources;
+    strictContentSites = [...(result.strictContentSites ?? [])];
+    $('#apply-network').disabled = true;
     revision = result.revision;
     render();
     refreshCheckResult();
@@ -542,23 +571,35 @@ $('#remove-exception').addEventListener('click', async () => {
   if (!await save(domains, `${domain} is no longer blocked as part of an allowed website.`, exceptions.filter(item => item !== domain), domains, exceptions, '#exception-status')) { selectedException = domain; render(); }
 });
 $('#supporting-resources').addEventListener('change', () => {
-  const changed = $('#supporting-resources').checked !== supportingResources;
+  const domain = $('#network-site').value;
+  const changed = domain && $('#supporting-resources').checked !== !strictContentSites.includes(domain);
+  if (changed) networkDrafts.set(domain, $('#supporting-resources').checked);
+  else networkDrafts.delete(domain);
   $('#apply-network').disabled = !changed;
   $('#network-status').textContent = changed ? 'Select Save change to apply this setting.' : '';
 });
+$('#network-site').addEventListener('change', () => {
+  const site = $('#network-site').value;
+  $('#supporting-resources').checked = networkDrafts.has(site) ? networkDrafts.get(site) : !strictContentSites.includes(site);
+  $('#apply-network').disabled = !networkDrafts.has(site);
+  $('#network-status').textContent = networkDrafts.has(site) ? 'Select Save change to apply this setting.' : '';
+});
 $('#network-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (busy || mode !== 'allow' || $('#supporting-resources').checked === supportingResources) return;
+  const domain = $('#network-site').value;
+  if (busy || mode !== 'allow' || !domain || $('#supporting-resources').checked === !strictContentSites.includes(domain)) return;
   busy = true;
   for (const control of settings.querySelectorAll('button,input,select')) control.disabled = true;
   try {
-    const result = await request({type: 'setSupporting', enabled: $('#supporting-resources').checked, revision});
-    supportingResources = result.supportingResources;
+    const result = await request({type: 'setSupporting', domain, enabled: $('#supporting-resources').checked, revision});
+    strictContentSites = [...result.strictContentSites];
+    networkDrafts.delete(domain);
     revision = result.revision;
     undoDomains = null;
     undoExceptions = null;
+    undoStrict = null;
     hideUndo();
-    $('#network-status').textContent = `${supportingResources ? 'Extra content is allowed' : 'Extra content from other websites is blocked'}. Reload any open website tabs to see the change.`;
+    $('#network-status').textContent = `${domain}: ${$('#supporting-resources').checked ? 'Extra content is allowed' : 'Extra content from other websites is blocked'}. Reload any open website tabs to see the change.`;
     refreshCheckResult();
     setExpiry(result.expiresAt);
   } catch (error) {
@@ -573,7 +614,8 @@ async function undoLastChange(feedback) {
   if (!undoDomains) return;
   const previous = [...undoDomains];
   const previousExceptions = [...undoExceptions];
-  if (await save(previous, 'Last change undone.', previousExceptions, domains, exceptions, feedback)) { undoDomains = null; undoExceptions = null; hideUndo(); }
+  const previousStrict = [...undoStrict];
+  if (await save(previous, 'Last change undone.', previousExceptions, domains, exceptions, feedback, previousStrict)) { undoDomains = null; undoExceptions = null; undoStrict = null; hideUndo(); }
 }
 $('#undo').addEventListener('click', () => undoLastChange('#status'));
 $('#undo-exception').addEventListener('click', () => undoLastChange('#exception-status'));
@@ -598,8 +640,12 @@ $('#diagnostic-action').addEventListener('click', async () => {
   const action = diagnosticAction;
   if (!action || busy) return;
   if (action.type === 'reviewSupporting') {
+    if (action.domain && domains.includes(action.domain)) {
+      $('#network-site').value = action.domain;
+      $('#network-site').dispatchEvent(new Event('change'));
+    }
     $('#network-panel').scrollIntoView?.({behavior: 'smooth', block: 'center'});
-    $('#supporting-resources').focus();
+    $('#network-site').focus();
     return;
   }
   const {domain} = action;

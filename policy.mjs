@@ -20,7 +20,7 @@ export function parseDomains(text) {
   return [...domains].sort();
 }
 
-export function buildRules(domains, mode = 'allow', blockedPageUrl, exceptions = [], allowSupportingResources = true) {
+export function buildRules(domains, mode = 'allow', blockedPageUrl, exceptions = [], strictContentSites = []) {
   // DNR otherwise excludes main_frame by default. An empty excludedResourceTypes
   // list is ambiguous across browser versions, so enumerate every supported type.
   const resourceTypes = ['main_frame', 'sub_frame', 'stylesheet', 'script', 'image',
@@ -35,7 +35,12 @@ export function buildRules(domains, mode = 'allow', blockedPageUrl, exceptions =
   const rules = [{id: 105, priority: 3, action: {type: 'redirect', redirect},
     condition: {regexFilter: captureHost, resourceTypes: ['main_frame']}}];
   if (!['allow', 'block'].includes(mode)) throw new Error('Choose Allowlist or Blocklist mode.');
-  if (typeof allowSupportingResources !== 'boolean') throw new Error('Choose whether supporting resources can load.');
+  // Accept the previous boolean argument while older backup/migration tests and
+  // clients move to per-site choices. A missing choice permits content by default.
+  if (typeof strictContentSites === 'boolean') strictContentSites = strictContentSites ? [] : domains;
+  if (!Array.isArray(strictContentSites) || strictContentSites.some(site => !domains.includes(site))) {
+    throw new Error('Content choices must belong to allowed websites.');
+  }
   if (mode === 'block' && exceptions.length) throw new Error('Blocked exceptions only apply in Allowlist mode.');
   if (exceptions.some(child => !domains.some(parent => child !== parent && child.endsWith(`.${parent}`)))) {
     throw new Error('Each blocked exception must be below an allowed parent domain.');
@@ -44,14 +49,21 @@ export function buildRules(domains, mode = 'allow', blockedPageUrl, exceptions =
   if (mode === 'allow' && domains.length) rules.push(
     {id: 100, priority: 4, action: {type: 'allow'}, condition: {requestDomains: domains, ...(exceptions.length ? {excludedRequestDomains: exceptions} : {}), resourceTypes}}
   );
-  if (mode === 'allow' && domains.length && allowSupportingResources) rules.push(
-    // Sites such as YouTube need scripts/video from other hosts. Permit those
-    // resources when the initiating page is listed, but keep off-list frames
-    // and top-level navigations subject to the default block rules.
-    {id: 101, priority: 4, action: {type: 'allow'}, condition: {
-      initiatorDomains: domains, ...(exceptions.length ? {excludedInitiatorDomains: exceptions} : {}), resourceTypes: resourceTypes.filter(type => type !== 'main_frame' && type !== 'sub_frame')
-    }}
-  );
+  if (mode === 'allow') {
+    // A compatible child of a strict parent gets its own allow rule. A strict
+    // child excludes itself from each compatible ancestor's rule. Explicitly
+    // blocked subdomains are excluded from every supporting-content rule.
+    let index = 0;
+    for (const site of domains.filter(domain => !strictContentSites.includes(domain))) {
+      const excluded = [...new Set([...exceptions, ...strictContentSites.filter(child => child !== site && child.endsWith(`.${site}`))])];
+      const id = index === 0 ? 101 : 200 + index;
+      index++;
+      rules.push({id, priority: 4, action: {type: 'allow'}, condition: {
+        initiatorDomains: [site], ...(excluded.length ? {excludedInitiatorDomains: excluded} : {}),
+        resourceTypes: resourceTypes.filter(type => type !== 'main_frame' && type !== 'sub_frame')
+      }});
+    }
+  }
   if (mode === 'allow' && exceptions.length) rules.push({id: 106, priority: 5, action: {type: 'block'},
     condition: {requestDomains: exceptions, resourceTypes: resourceTypes.filter(type => type !== 'main_frame')}});
   if (mode === 'block' && domains.length) rules.push(
