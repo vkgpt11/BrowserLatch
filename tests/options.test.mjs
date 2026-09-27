@@ -86,6 +86,79 @@ test('one active list can be searched and checked against effective access', asy
   page.dom.window.close();
 });
 
+test('diagnostic distinguishes a blocked main page and can allow it', async () => {
+  const page = await createPage({domains: ['youtube.com']});
+  const {$, fire, state} = page;
+  $('#check-domain').value = 'https://news.example/path';
+  fire('#check-form', 'submit');
+  assert.match($('#diagnosis').textContent, /main website is blocked/);
+  assert.equal($('#diagnostic-action').textContent, 'Allow news.example');
+  fire('#diagnostic-action', 'click');
+  await settle();
+  assert.deepEqual(state.domains, ['news.example', 'youtube.com']);
+  assert.match($('#diagnosis').textContent, /allows the main website/);
+  assert.equal($('#diagnostic-action').hidden, true);
+});
+
+test('diagnostic checks an embedded provider and removes a blocked child exception', async () => {
+  const page = await createPage({domains: ['example.com'], exceptions: ['login.example.com']});
+  const {$, fire, state} = page;
+  $('#check-domain').value = 'example.com';
+  $('#problem-kind').value = 'frame';
+  fire('#problem-kind', 'change');
+  assert.equal($('#related-box').hidden, false);
+  fire('#check-form', 'submit');
+  assert.match($('#diagnosis').textContent, /cannot identify it from this page alone/);
+  assert.equal($('#diagnostic-action').hidden, true);
+  $('#related-domain').value = 'login.example.com';
+  fire('#related-domain', 'input');
+  fire('#check-form', 'submit');
+  assert.match($('#diagnosis').textContent, /blocked in the sign-in or payment box/);
+  assert.equal($('#diagnostic-action').textContent, 'Remove block for login.example.com');
+  fire('#diagnostic-action', 'click');
+  await settle();
+  assert.deepEqual(state.exceptions, []);
+  assert.match($('#diagnosis').textContent, /can open in the sign-in or payment box/);
+});
+
+test('diagnostic checks strict supporting content and refreshes after its setting changes', async () => {
+  const page = await createPage({domains: ['example.com'], supportingResources: false});
+  const {$, fire, state} = page;
+  $('#check-domain').value = 'example.com';
+  $('#problem-kind').value = 'content';
+  fire('#problem-kind', 'change');
+  fire('#check-form', 'submit');
+  assert.match($('#diagnosis').textContent, /content from unlisted websites is blocked/);
+  assert.equal($('#diagnostic-action').textContent, 'Review content setting');
+  $('#related-domain').value = 'cdn.example.net';
+  fire('#related-domain', 'input');
+  assert.equal($('#diagnosis-results').hidden, true);
+  fire('#check-form', 'submit');
+  assert.match($('#diagnosis').textContent, /blocked by the content setting/);
+  $('#supporting-resources').checked = true;
+  fire('#supporting-resources', 'change');
+  fire('#network-form', 'submit');
+  await settle();
+  assert.equal(state.supportingResources, true);
+  assert.match($('#diagnosis').textContent, /is allowed under these rules/);
+  assert.equal($('#diagnostic-action').hidden, true);
+});
+
+test('diagnostic reports a blocked provider in blocklist mode and can remove its rule', async () => {
+  const page = await createPage({mode: 'block', domains: ['pay.example']});
+  const {$, fire, state} = page;
+  $('#check-domain').value = 'shop.example';
+  $('#problem-kind').value = 'frame';
+  fire('#problem-kind', 'change');
+  $('#related-domain').value = 'login.pay.example';
+  fire('#check-form', 'submit');
+  assert.equal($('#diagnostic-action').textContent, 'Remove block for pay.example');
+  fire('#diagnostic-action', 'click');
+  await settle();
+  assert.deepEqual(state.domains, []);
+  assert.match($('#diagnosis').textContent, /can open in the sign-in or payment box/);
+});
+
 test('new users choose a rule and first site while existing users keep their settings', async () => {
   const existing = await createPage({domains: ['example.com']});
   assert.equal(existing.$('#guide-panel').hidden, true);

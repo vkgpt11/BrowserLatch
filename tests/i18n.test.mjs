@@ -39,6 +39,8 @@ test('ten languages translate both screens, preserve domains, and switch without
   await settle();
   assert.equal(document.documentElement.dir, 'rtl');
   assert.equal(document.querySelector('h1').textContent, 'الوصول إلى المواقع');
+  assert.notEqual(dom.window.BrowseLatchI18n.translated('Allow {site}'), 'Allow {site}');
+  assert.notEqual(document.querySelector('#check-panel h2').textContent, "Why isn't this website working?");
   assert.match(dom.window.BrowseLatchI18n.translated('Block websites on this list? All other websites will be allowed.'), /سيُسمح/);
   assert.match(dom.window.BrowseLatchI18n.translated('Not saved: Invalid domain: bad/site'), /نطاق غير صالح/);
   assert.doesNotMatch(dom.window.BrowseLatchI18n.translated('Extra content is allowed. Reload any open website tabs to see the change.'), /Extra content is allowed/);

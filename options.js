@@ -1,5 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const uiText = value => window.BrowseLatchI18n?.translated(value).trim() ?? value;
+const siteText = (source, site) => uiText(source).replace('{site}', site);
 const settings = $('#settings');
 const authCard = $('#auth-card');
 let mode = 'allow';
@@ -17,6 +18,7 @@ let undoDomains = null;
 let undoExceptions = null;
 let busy = false;
 let pendingBackup = null;
+let diagnosticAction = null;
 
 function hideUndo() { $('#undo').hidden = true; $('#undo-exception').hidden = true; }
 const isAccessLockedError = message => /^Settings are locked\.|^Too many attempts\. Settings are temporarily locked\./i.test(message);
@@ -93,6 +95,12 @@ function showLocked(configured, message = '') {
   $('#supporting-resources').checked = true;
   $('#status').textContent = '';
   $('#check-result').textContent = '';
+  $('#diagnosis').textContent = '';
+  $('#diagnosis-results').hidden = true;
+  $('#diagnostic-action').hidden = true;
+  diagnosticAction = null;
+  $('#check-form').reset();
+  $('#related-box').hidden = true;
   $('#exception-status').textContent = '';
   $('#network-status').textContent = '';
   $('#legacy-backup-list').textContent = '';
@@ -131,17 +139,87 @@ function explain(host) {
   return match ? `Blocked by ${match}.` : 'Allowed because it is not on your blocked websites list.';
 }
 
+const matchingDomain = (host, list) => list.filter(domain => matchesDomain(host, domain)).sort((a, b) => b.length - a.length)[0];
+
+function websiteHost(input) {
+  const url = new URL(/^[a-z]+:\/\//i.test(input) ? input : `https://${input}`);
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) throw new Error('Invalid website address.');
+  return url.hostname.toLowerCase();
+}
+
+function blockedAction(host, fromAnotherWebsite = false) {
+  if (mode === 'allow') {
+    const exception = matchingDomain(host, exceptions);
+    return exception ? {type: 'removeException', domain: exception} : {type: 'add', domain: host, fromAnotherWebsite};
+  }
+  return {type: 'remove', domain: matchingDomain(host, domains)};
+}
+
+function setDiagnosticAction(action) {
+  diagnosticAction = action;
+  const button = $('#diagnostic-action');
+  button.hidden = !action;
+  if (action) button.textContent = action.type === 'add' ? siteText('Allow {site}', action.domain) :
+    action.type === 'reviewSupporting' ? uiText('Review content setting') : siteText('Remove block for {site}', action.domain);
+}
+
 function showCheckResult() {
   const input = $('#check-domain').value.trim();
+  $('#diagnosis-results').hidden = false;
+  setDiagnosticAction(null);
   try {
-    const url = new URL(/^[a-z]+:\/\//i.test(input) ? input : `https://${input}`);
-    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) throw new Error();
-    $('#check-result').textContent = `${url.hostname}: ${explain(url.hostname.toLowerCase())}`;
-  } catch { $('#check-result').textContent = 'Enter a valid website address or domain.'; }
+    const host = websiteHost(input);
+    $('#check-result').textContent = `${host}: ${explain(host)}`;
+    if (!isAllowed(host)) {
+      $('#diagnosis').textContent = 'The main website is blocked by BrowseLatch. Allow it before checking sign-in or other content.';
+      setDiagnosticAction(blockedAction(host));
+      return;
+    }
+    const kind = $('#problem-kind').value;
+    if (kind === 'page') {
+      $('#diagnosis').textContent = 'BrowseLatch allows the main website. If it still does not open, the cause may be outside these website rules.';
+      return;
+    }
+    const otherInput = $('#related-domain').value.trim();
+    if (!otherInput) {
+      if (kind === 'frame') $('#diagnosis').textContent = 'The main website can open. An embedded sign-in or payment page may use another website. Enter that domain above if you know it. BrowseLatch cannot identify it from this page alone.';
+      else if (mode === 'allow' && !supportingResources) {
+        $('#diagnosis').textContent = 'The main website can open, but content from unlisted websites is blocked. Review the content setting, or enter a content domain to check it.';
+        setDiagnosticAction({type: 'reviewSupporting'});
+      } else $('#diagnosis').textContent = 'The main website can open. Enter the domain used by the missing content if you know it; BrowseLatch cannot identify it from this page alone.';
+      return;
+    }
+    let other;
+    try { other = websiteHost(otherInput); }
+    catch { $('#diagnosis').textContent = 'Enter a valid other website address or domain.'; return; }
+    if (kind === 'frame') {
+      if (isAllowed(other)) $('#diagnosis').textContent = siteText('Under these rules, {site} can open in the sign-in or payment box. The problem may have another cause.', other);
+      else {
+        $('#diagnosis').textContent = siteText('{site} is blocked in the sign-in or payment box. Allowing it also permits direct visits.', other);
+        setDiagnosticAction(blockedAction(other, true));
+      }
+      return;
+    }
+    const explicitlyBlocked = mode === 'allow' ? matchingDomain(other, exceptions) : matchingDomain(other, domains);
+    if (explicitlyBlocked) {
+      $('#diagnosis').textContent = siteText('Content from {site} is blocked. Removing this block also affects its subdomains.', other);
+      setDiagnosticAction(blockedAction(other, true));
+    } else if (mode === 'allow' && !isAllowed(other) && !supportingResources) {
+      $('#diagnosis').textContent = siteText('Content from {site} is blocked by the content setting. Allowing this site also permits direct visits.', other);
+      setDiagnosticAction(blockedAction(other, true));
+    } else $('#diagnosis').textContent = siteText('Content from {site} is allowed under these rules. The problem may have another cause.', other);
+  } catch { $('#check-result').textContent = 'Enter a valid website address or domain.'; $('#diagnosis').textContent = ''; }
 }
 
 function refreshCheckResult() {
   if ($('#check-result').textContent) showCheckResult();
+}
+
+function clearDiagnosis() {
+  $('#check-result').textContent = '';
+  $('#diagnosis').textContent = '';
+  $('#diagnosis-results').hidden = true;
+  setDiagnosticAction(null);
 }
 
 function updatePreview() {
@@ -481,6 +559,7 @@ $('#network-form').addEventListener('submit', async event => {
     undoExceptions = null;
     hideUndo();
     $('#network-status').textContent = `${supportingResources ? 'Extra content is allowed' : 'Extra content from other websites is blocked'}. Reload any open website tabs to see the change.`;
+    refreshCheckResult();
     setExpiry(result.expiresAt);
   } catch (error) {
     await reportSaveError(error, '#network-status');
@@ -506,7 +585,35 @@ $('#check-form').addEventListener('submit', event => {
   event.preventDefault();
   showCheckResult();
 });
-$('#check-domain').addEventListener('input', () => { $('#check-result').textContent = ''; });
+$('#check-domain').addEventListener('input', clearDiagnosis);
+$('#related-domain').addEventListener('input', clearDiagnosis);
+$('#problem-kind').addEventListener('change', () => {
+  $('#related-box').hidden = $('#problem-kind').value === 'page';
+  clearDiagnosis();
+});
+$('#language').addEventListener('change', () => {
+  if ($('#check-result').textContent) queueMicrotask(showCheckResult);
+});
+$('#diagnostic-action').addEventListener('click', async () => {
+  const action = diagnosticAction;
+  if (!action || busy) return;
+  if (action.type === 'reviewSupporting') {
+    $('#network-panel').scrollIntoView?.({behavior: 'smooth', block: 'center'});
+    $('#supporting-resources').focus();
+    return;
+  }
+  const {domain} = action;
+  if (action.type === 'add') {
+    if (!window.confirm(siteText('Allow {site} and its subdomains? This also allows direct visits.', domain))) return;
+    if (!await save([...domains, domain], `${domain} added to allowed websites.`) && !settings.hidden) $('#diagnosis').textContent = $('#status').textContent;
+  } else if (action.type === 'removeException') {
+    if (!window.confirm(siteText('Remove the block for {site} and its subdomains?', domain))) return;
+    if (!await save(domains, `${domain} is no longer blocked.`, exceptions.filter(item => item !== domain), domains, exceptions, '#exception-status') && !settings.hidden) $('#diagnosis').textContent = $('#exception-status').textContent;
+  } else if (action.type === 'remove') {
+    if (!window.confirm(siteText('Remove {site} from blocked websites? This also affects its subdomains.', domain))) return;
+    if (!await save(domains.filter(item => item !== domain), `${domain} removed from blocked websites.`) && !settings.hidden) $('#diagnosis').textContent = $('#status').textContent;
+  }
+});
 $('#export-rules').addEventListener('click', async () => {
   if (busy) return;
   busy = true;
